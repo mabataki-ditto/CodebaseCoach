@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# frontend build
+dist/
+coverage/
+*.tsbuildinfo
+
+# backend
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# env
+.env
+.env.*
+!.env.example
+
+# generated runtime data
+generated_docs/*
+!generated_docs/.gitkeep
+temp_repos/*
+!temp_repos/.gitkeep
+data/*
+!data/.gitkeep
+
+# editor and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.docs/
+.codex/
+.trae/

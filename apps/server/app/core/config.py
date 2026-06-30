@@ -1,0 +1,54 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+SERVER_DIR = Path(__file__).resolve().parents[2]
+
+
+class Settings(BaseSettings):
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4.1-mini"
+    temp_repo_dir: str = "../../temp_repos"
+    generated_docs_dir: str = "../../generated_docs"
+    metrics_file: str = "../../data/metrics.jsonl"
+    mock_mode: bool = True
+    backend_cors_origins: str = "http://localhost:5173"
+    max_basic_file_bytes: int = 20_000
+    max_core_files: int = 12
+    max_core_file_bytes: int = 12_000
+    max_file_tree_depth: int = 4
+    max_file_tree_entries: int = 1_000
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.backend_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def temp_repo_path(self) -> Path:
+        return self._resolve_from_server_dir(self.temp_repo_dir)
+
+    @property
+    def generated_docs_path(self) -> Path:
+        return self._resolve_from_server_dir(self.generated_docs_dir)
+
+    @property
+    def metrics_path(self) -> Path:
+        return self._resolve_from_server_dir(self.metrics_file)
+
+    def _resolve_from_server_dir(self, raw_path: str) -> Path:
+        path = Path(raw_path)
+        if path.is_absolute():
+            return path.resolve()
+        return (SERVER_DIR / path).resolve()
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()

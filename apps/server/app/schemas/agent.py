@@ -1,3 +1,6 @@
+from typing import Any, Literal
+from uuid import uuid4
+
 from pydantic import BaseModel, Field
 
 from app.schemas.metrics import MockAnalysisMetrics
@@ -22,20 +25,40 @@ class CoreFileSummary(BaseModel):
     used_for_context: bool = True
 
 
+AgentStepStatus = Literal["pending", "running", "success", "failed", "skipped"]
+ToolCallStatus = Literal["running", "success", "failed", "skipped", "info"]
+
+
 class AgentStep(BaseModel):
+    step_id: str = Field(default_factory=lambda: uuid4().hex)
+    id: str = ""
+    key: str
     title: str
-    status: str
+    status: AgentStepStatus
     description: str
-    started_at: str
-    ended_at: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: int = 0
     error_message: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def model_post_init(self, _: Any) -> None:
+        if not self.id:
+            self.id = self.step_id
+        if self.completed_at is None:
+            self.completed_at = self.ended_at
 
 
 class ToolCallLog(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex)
     tool_name: str
-    status: str
+    status: ToolCallStatus
     input_summary: str
     output_summary: str
+    input: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)
+    related_files: list[str] = Field(default_factory=list)
     duration_ms: int
     created_at: str
     error_message: str | None = None

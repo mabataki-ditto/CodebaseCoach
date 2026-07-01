@@ -159,7 +159,7 @@ h1 {
 
 .repo-input-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(260px, 1fr) auto auto;
   gap: 12px;
   align-items: center;
 }
@@ -170,7 +170,7 @@ h1 {
 
 .repo-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
 }
@@ -197,7 +197,7 @@ h1 {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.85fr) minmax(360px, 1.2fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(280px, 0.55fr) minmax(520px, 1.45fr);
   gap: 16px;
   align-items: stretch;
 }
@@ -217,13 +217,12 @@ h1 {
   height: 330px;
 }
 
-.core-file-scroll,
-.tool-log-scroll {
-  height: 280px;
+.core-file-scroll {
+  height: 360px;
 }
 
 .preview-scroll {
-  height: 708px;
+  height: 820px;
 }
 
 .core-file-list {
@@ -282,6 +281,111 @@ h1 {
   color: #e5e7eb;
 }
 
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-card .n-card__content {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.history-card-main {
+  min-width: 0;
+}
+
+.history-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-title strong {
+  overflow-wrap: anywhere;
+  font-size: 17px;
+}
+
+.history-card-main p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+  color: #5f6b7a;
+}
+
+.history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.history-meta span {
+  overflow-wrap: anywhere;
+}
+
+.history-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.history-error {
+  margin-top: 10px;
+}
+
+.doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.doc-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid #e5eaf3;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfe;
+  color: #1f2937;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-list-item:hover,
+.doc-list-item.active {
+  border-color: #2563eb;
+  background: #f4f7ff;
+}
+
+.doc-list-item strong,
+.doc-list-item span {
+  overflow-wrap: anywhere;
+}
+
+.doc-list-item span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.doc-meta span {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 760px) {
   .app-header,
   .section-header {
@@ -307,19 +411,11 @@ h1 {
 
 @media (max-width: 1180px) {
   .workspace-grid {
-    grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr);
-  }
-
-  .right-column {
-    grid-column: 1 / -1;
+    grid-template-columns: minmax(260px, 0.65fr) minmax(420px, 1.35fr);
   }
 
   .preview-scroll {
-    height: 420px;
-  }
-
-  .repo-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    height: 680px;
   }
 }
 
@@ -340,9 +436,16 @@ h1 {
 
   .tree-scroll,
   .core-file-scroll,
-  .tool-log-scroll,
   .preview-scroll {
     height: auto;
     max-height: 420px;
+  }
+
+  .history-card .n-card__content {
+    flex-direction: column;
+  }
+
+  .history-actions {
+    justify-content: flex-start;
   }
 }

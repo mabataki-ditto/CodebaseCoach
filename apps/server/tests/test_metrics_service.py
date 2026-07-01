@@ -193,6 +193,62 @@ class MetricsServiceTests(unittest.TestCase):
         self.assertEqual(metrics.model, "m")
         self.assertEqual(metrics.prompt_template_count, 7)
 
+    def test_build_mock_analysis_metrics_computes_llm_and_path_metrics(self) -> None:
+        records = [
+            LLMCallRecord(
+                provider="openai",
+                model="m",
+                prompt_type="项目概览",
+                duration_ms=10,
+                status="success",
+            ),
+            LLMCallRecord(
+                provider="openai",
+                model="m",
+                prompt_type="技术栈",
+                duration_ms=5,
+                status="failed",
+                error_message="boom",
+            ),
+        ]
+        documents = [
+            GeneratedDocument(
+                title="面试问题",
+                filename="05-面试问题与回答.md",
+                path="generated_docs/demo/05-面试问题与回答.md",
+                content="## Q1：xxx\n## Q2：yyy",
+            ),
+            GeneratedDocument(
+                title="技术栈",
+                filename="02.md",
+                path="generated_docs/demo/02.md",
+                content="引用 `src/main.ts` 与 `README.md`。",
+            ),
+        ]
+
+        metrics = build_mock_analysis_metrics(
+            selection_metrics=CoreFileSelectionMetrics(candidate_core_files=0, raw_candidate_chars=0),
+            core_files=[],
+            documents=documents,
+            analysis_duration_ms=100,
+            used_mock_ai=False,
+            provider="openai",
+            model="m",
+            prompt_template_count=7,
+            llm_call_records=records,
+        )
+
+        self.assertEqual(metrics.interview_question_count, 2)
+        self.assertGreaterEqual(metrics.referenced_file_path_count, 1)
+        self.assertEqual(metrics.llm_call_count, 2)
+        self.assertEqual(metrics.llm_success_count, 1)
+        self.assertEqual(metrics.llm_failed_count, 1)
+        self.assertEqual(metrics.llm_total_duration_ms, 15)
+        self.assertFalse(metrics.used_mock_ai)
+        self.assertEqual(metrics.provider, "openai")
+        self.assertEqual(metrics.model, "m")
+        self.assertEqual(metrics.prompt_template_count, 7)
+
     def test_build_mock_analysis_metrics_returns_zero_ratio_when_no_candidates(self) -> None:
         metrics = build_mock_analysis_metrics(
             selection_metrics=CoreFileSelectionMetrics(candidate_core_files=0, raw_candidate_chars=0),

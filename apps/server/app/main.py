@@ -4,7 +4,9 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.agent import router as agent_router
+from app.api.docs import router as docs_router
 from app.api.health import router as health_router
+from app.api.history import router as history_router
 from app.api.repo import router as repo_router
 from app.core.config import settings
 from app.core.errors import AppError, build_error_response
@@ -24,6 +26,8 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(repo_router)
     app.include_router(agent_router)
+    app.include_router(history_router)
+    app.include_router(docs_router)
     return app
 
 

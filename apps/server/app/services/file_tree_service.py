@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 
+from app.schemas.metrics import RepoScanMetrics
 from app.schemas.repo import BasicFileSummary, FileTreeNode
 
 IGNORED_NAMES = {
@@ -29,6 +31,19 @@ BASIC_FILE_NAMES = {
 def build_file_tree(root: Path, *, max_depth: int = 4, max_entries: int = 1_000) -> list[FileTreeNode]:
     counter = _EntryCounter(max_entries=max_entries)
     return _build_children(root.resolve(), root.resolve(), depth=0, max_depth=max_depth, counter=counter)
+
+
+def scan_repo_metrics(root: Path) -> RepoScanMetrics:
+    root = root.resolve()
+    metrics = RepoScanMetrics()
+
+    for _, dirnames, filenames in os.walk(root):
+        ignored = [name for name in dirnames if name.lower() in IGNORED_NAMES]
+        metrics.ignored_dirs += len(ignored)
+        dirnames[:] = [name for name in dirnames if name.lower() not in IGNORED_NAMES]
+        metrics.total_files += len(filenames)
+
+    return metrics
 
 
 def read_basic_files(root: Path, *, max_bytes: int = 20_000) -> list[BasicFileSummary]:

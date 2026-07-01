@@ -8,11 +8,16 @@ SERVER_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
+    llm_provider: str = "openai"
+    llm_api_key: str | None = None
+    llm_model: str = "gpt-4.1-mini"
+    llm_base_url: str | None = None
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
     temp_repo_dir: str = "../../temp_repos"
     generated_docs_dir: str = "../../generated_docs"
     metrics_file: str = "../../data/metrics.jsonl"
+    history_file: str = "../../data/history.json"
     mock_mode: bool = True
     backend_cors_origins: str = "http://localhost:5173"
     max_basic_file_bytes: int = 20_000
@@ -38,6 +43,10 @@ class Settings(BaseSettings):
     @property
     def metrics_path(self) -> Path:
         return self._resolve_from_server_dir(self.metrics_file)
+
+    @property
+    def history_path(self) -> Path:
+        return self._resolve_from_server_dir(self.history_file)
 
     def _resolve_from_server_dir(self, raw_path: str) -> Path:
         path = Path(raw_path)

@@ -17,11 +17,15 @@ DEFAULT_MAX_OUTPUT_TOKENS = 1800
 DEFAULT_PROVIDER = "openai"
 
 
-def has_openai_credentials(api_key: str | None) -> bool:
+def has_llm_credentials(api_key: str | None) -> bool:
     if not api_key:
         return False
     normalized = api_key.strip()
-    return bool(normalized and normalized != "your_api_key_here")
+    return bool(normalized and normalized not in {"your_api_key_here", "your_llm_api_key_here"})
+
+
+def has_openai_credentials(api_key: str | None) -> bool:
+    return has_llm_credentials(api_key)
 
 
 def generate_markdown_documents(
@@ -30,23 +34,27 @@ def generate_markdown_documents(
     context: str,
     api_key: str | None,
     model: str,
+    base_url: str | None = None,
     recorder: LLMCallService | None = None,
 ) -> list[tuple[str, str, str]]:
-    if not has_openai_credentials(api_key):
+    if not has_llm_credentials(api_key):
         raise AppError(
             status_code=400,
-            code="OPENAI_API_KEY_MISSING",
-            message="未配置 OpenAI API Key，无法调用真实 AI",
+            code="LLM_API_KEY_MISSING",
+            message="未配置 LLM API Key，无法调用真实 AI",
         )
     if OpenAI is None:
         raise AppError(
             status_code=500,
             code="LLM_DEPENDENCY_MISSING",
-            message="OpenAI Python SDK 未安装",
+            message="OpenAI-compatible Python SDK 未安装",
             detail="请先运行 pip install -r requirements.txt",
         )
 
-    client = OpenAI(api_key=api_key.strip())
+    client_kwargs: dict[str, str] = {"api_key": api_key.strip()}
+    if base_url:
+        client_kwargs["base_url"] = base_url.strip()
+    client = OpenAI(**client_kwargs)
     documents: list[tuple[str, str, str]] = []
     for prompt in document_prompts:
         started = perf_counter()
@@ -86,11 +94,17 @@ def _generate_single_document(
     api_key: str,
 ) -> str:
     try:
-        response = client.responses.create(
+        response = client.chat.completions.create(
             model=model,
-            instructions=SYSTEM_PROMPT,
-            input=f"{prompt}\n\n# 已读取的仓库上下文\n\n{context}",
-            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"{prompt}\n\n# 已读取的仓库上下文\n\n{context}",
+                },
+            ],
+            max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+            stream=False,
         )
     except Exception as exc:
         raise AppError(
@@ -106,12 +120,21 @@ def _generate_single_document(
             status_code=502,
             code="LLM_EMPTY_RESPONSE",
             message="AI 文档生成失败",
-            detail="OpenAI 返回内容为空",
+            detail="LLM 返回内容为空",
         )
     return content
 
 
 def _extract_output_text(response: Any) -> str:
+    choices = getattr(response, "choices", None)
+    if choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            return message["content"]
+
     output_text = getattr(response, "output_text", None)
     if isinstance(output_text, str):
         return output_text
@@ -130,5 +153,5 @@ def _extract_output_text(response: Any) -> str:
 def _safe_error_detail(exc: Exception, *, api_key: str) -> str:
     detail = str(exc)[:500]
     if api_key:
-        detail = detail.replace(api_key, "[redacted-openai-key]")
-    return re.sub(r"sk-[A-Za-z0-9_-]{20,}", "[redacted-openai-key]", detail)
+        detail = detail.replace(api_key, "[redacted-llm-key]")
+    return re.sub(r"sk-[A-Za-z0-9_-]{20,}", "[redacted-llm-key]", detail)

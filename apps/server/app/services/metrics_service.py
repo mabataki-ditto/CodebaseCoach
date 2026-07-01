@@ -1,8 +1,8 @@
 import re
 from pathlib import Path
 
-from app.schemas.agent import CoreFileSummary, GeneratedDocument
-from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoOperationMetrics
+from app.schemas.agent import AgentStep, CoreFileSummary, GeneratedDocument, ToolCallLog
+from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoOperationMetrics, RepoScanMetrics
 from app.schemas.repo import FileTreeNode
 from app.services.llm_call_service import LLMCallRecord
 
@@ -57,6 +57,9 @@ def build_mock_analysis_metrics(
     model: str = "",
     prompt_template_count: int = 0,
     llm_call_records: list[LLMCallRecord] | None = None,
+    agent_steps: list[AgentStep] | None = None,
+    tool_logs: list[ToolCallLog] | None = None,
+    repo_scan_metrics: RepoScanMetrics | None = None,
 ) -> MockAnalysisMetrics:
     final_context_chars = sum(len(file.content_preview) for file in core_files)
     raw_candidate_chars = selection_metrics.raw_candidate_chars
@@ -73,8 +76,15 @@ def build_mock_analysis_metrics(
     generated_doc_total_words = sum(_count_words(document.content) for document in documents)
     interview_question_count = _count_interview_questions(documents)
     referenced_file_path_count = _count_referenced_file_paths(documents)
+    steps = agent_steps or []
+    logs = tool_logs or []
+    total_tool_duration_ms = sum(log.duration_ms for log in logs)
+    tool_call_count = len(logs)
+    scan_metrics = repo_scan_metrics or RepoScanMetrics()
 
     return MockAnalysisMetrics(
+        total_files=scan_metrics.total_files,
+        ignored_dirs=scan_metrics.ignored_dirs,
         candidate_core_files=selection_metrics.candidate_core_files,
         selected_core_files=len(core_files),
         read_files=len(core_files),
@@ -98,4 +108,14 @@ def build_mock_analysis_metrics(
         interview_question_count=interview_question_count,
         referenced_file_path_count=referenced_file_path_count,
         prompt_template_count=prompt_template_count,
+        agent_step_count=len(steps),
+        agent_success_step_count=sum(1 for step in steps if step.status == "success"),
+        agent_failed_step_count=sum(1 for step in steps if step.status == "failed"),
+        agent_skipped_step_count=sum(1 for step in steps if step.status == "skipped"),
+        tool_call_count=tool_call_count,
+        tool_success_count=sum(1 for log in logs if log.status == "success"),
+        tool_failed_count=sum(1 for log in logs if log.status == "failed"),
+        avg_tool_duration_ms=round(total_tool_duration_ms / tool_call_count) if tool_call_count else 0,
+        max_tool_duration_ms=max((log.duration_ms for log in logs), default=0),
+        total_tool_duration_ms=total_tool_duration_ms,
     )

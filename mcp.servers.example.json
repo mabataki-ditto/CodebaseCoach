@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "github",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "npx.cmd",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
+        "npm_config_cache": "E:\\vueProject\\CodebaseCoach\\.mcp-npm-cache"
+      },
+      "readonly": true,
+      "allowed_tools": [
+        "list_issues",
+        "list_pull_requests",
+        "list_commits"
+      ],
+      "timeout_ms": 30000
+    }
+  ]
+}

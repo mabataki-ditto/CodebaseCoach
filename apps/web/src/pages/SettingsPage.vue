@@ -1,6 +1,6 @@
 <template>
-  <main class="page-stack">
-    <section class="section-header">
+  <n-layout class="settings-page" embedded>
+    <section class="page-heading">
       <div>
         <h1>设置</h1>
         <p>展示后端连接、模型配置说明、显示设置和缓存目录。</p>
@@ -21,7 +21,7 @@
         <n-card title="模型配置">
           <n-descriptions :column="1" bordered>
             <n-descriptions-item label="当前模型">gpt-4.1-mini</n-descriptions-item>
-            <n-descriptions-item label="Mock 模式">true</n-descriptions-item>
+            <n-descriptions-item label="LLM 模式">真实 LLM</n-descriptions-item>
             <n-descriptions-item label="API Key">仅在后端 .env 配置</n-descriptions-item>
           </n-descriptions>
         </n-card>
@@ -45,7 +45,7 @@
         </n-card>
       </n-grid-item>
     </n-grid>
-  </main>
+  </n-layout>
 </template>
 
 <script setup lang="ts">

@@ -12,6 +12,16 @@ MetricStatus = Literal["success", "failed"]
 class CoreFileSelectionMetrics(BaseModel):
     candidate_core_files: int = Field(default=0, ge=0)
     raw_candidate_chars: int = Field(default=0, ge=0)
+    candidates: list["CoreFileCandidateMetric"] = Field(default_factory=list)
+
+
+class CoreFileCandidateMetric(BaseModel):
+    path: str
+    file_type: str
+    size: int = Field(..., ge=0)
+    reason: str
+    score: int = Field(..., ge=0)
+    truncated: bool = False
 
 
 class RepoScanMetrics(BaseModel):
@@ -37,6 +47,9 @@ class MockAnalysisMetrics(CoreFileSelectionMetrics):
     llm_success_count: int = Field(default=0, ge=0)
     llm_failed_count: int = Field(default=0, ge=0)
     llm_total_duration_ms: int = Field(default=0, ge=0)
+    llm_input_tokens: int = Field(default=0, ge=0)
+    llm_output_tokens: int = Field(default=0, ge=0)
+    llm_total_tokens: int = Field(default=0, ge=0)
     generated_doc_count: int = Field(default=0, ge=0)
     generated_doc_total_chars: int = Field(default=0, ge=0)
     generated_doc_total_words: int = Field(default=0, ge=0)
@@ -88,6 +101,9 @@ class RepoOperationMetrics(BaseModel):
     llm_success_count: int = Field(default=0, ge=0)
     llm_failed_count: int = Field(default=0, ge=0)
     llm_total_duration_ms: int = Field(default=0, ge=0)
+    llm_input_tokens: int = Field(default=0, ge=0)
+    llm_output_tokens: int = Field(default=0, ge=0)
+    llm_total_tokens: int = Field(default=0, ge=0)
     generated_doc_count: int = Field(default=0, ge=0)
     generated_doc_total_chars: int = Field(default=0, ge=0)
     generated_doc_total_words: int = Field(default=0, ge=0)

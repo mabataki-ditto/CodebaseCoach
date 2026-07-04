@@ -17,6 +17,8 @@ venv/
 .env
 .env.*
 !.env.example
+mcp.servers.json
+.mcp-npm-cache/
 
 # generated runtime data
 generated_docs/*

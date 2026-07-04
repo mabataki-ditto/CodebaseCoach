@@ -2,7 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from sqlalchemy.orm import sessionmaker
+
 from app.core.errors import AppError
+from app.db.session import create_engine_for_url, init_db
 from app.schemas.history import HistoryRecord
 from app.services.doc_storage_service import load_markdown_documents_for_history, save_markdown_documents
 from app.services.file_selector_service import select_core_files, select_core_files_with_metrics
@@ -231,8 +234,14 @@ class DocStorageTests(unittest.TestCase):
 
 
 class HistoryServiceTests(unittest.TestCase):
+    def _session_factory(self):
+        engine = create_engine_for_url("sqlite:///:memory:")
+        init_db(engine)
+        return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
     def test_add_and_list_history_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            session_factory = self._session_factory()
             history_file = Path(tmp) / "data" / "history.json"
 
             record = add_history_record(
@@ -245,15 +254,18 @@ class HistoryServiceTests(unittest.TestCase):
                 completed_at="2026-06-30T00:00:01Z",
                 docs_dir="generated_docs/owner_demo_1",
                 core_files_count=3,
+                session_factory=session_factory,
             )
-            records = list_history_records(history_file=history_file)
+            records = list_history_records(history_file=history_file, session_factory=session_factory)
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].id, record.id)
         self.assertEqual(records[0].core_files_count, 3)
+        self.assertFalse(history_file.exists())
 
     def test_delete_history_record_does_not_delete_generated_docs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            session_factory = self._session_factory()
             root = Path(tmp)
             history_file = root / "data" / "history.json"
             docs_dir = root / "generated_docs" / "owner_demo_1"
@@ -271,8 +283,9 @@ class HistoryServiceTests(unittest.TestCase):
                 completed_at="2026-06-30T00:00:01Z",
                 docs_dir="generated_docs/owner_demo_1",
                 core_files_count=1,
+                session_factory=session_factory,
             )
-            deleted = delete_history_record(history_file=history_file, record_id=record.id)
+            deleted = delete_history_record(history_file=history_file, record_id=record.id, session_factory=session_factory)
             doc_still_exists = doc_path.exists()
 
         self.assertTrue(deleted)

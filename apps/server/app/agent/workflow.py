@@ -5,11 +5,12 @@ from time import perf_counter
 from typing import Any, TypeVar
 
 from app.agent.prompts import REAL_DOCUMENT_PROMPTS, build_analysis_context
+from app.agent.tools import assert_tool_allowed
 from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.agent import AgentStep, AnalyzeRepoResponse, CoreFileSummary, ToolCallLog
 from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoOperationMetrics, RepoScanMetrics
-from app.schemas.repo import BasicFileSummary, RepoParseResponse
+from app.schemas.repo import RepoParseResponse
 from app.services.agent_step_service import AgentStepRecorder
 from app.services.analysis_job_service import AnalysisJobService
 from app.services.doc_storage_service import create_markdown_docs_dir, save_markdown_document_to_dir, save_markdown_documents
@@ -18,9 +19,14 @@ from app.services.file_tree_service import build_file_tree, read_basic_files, sc
 from app.services.github_service import clone_repository
 from app.services.llm_call_service import LLMCallService
 from app.services.llm_service import DEFAULT_PROVIDER, generate_markdown_documents, has_llm_credentials
-from app.services.metrics_service import build_mock_analysis_metrics, record_repo_operation_metrics
+from app.services.metrics_service import build_context_quality_report, build_mock_analysis_metrics, record_repo_operation_metrics
+from app.mcp.client import StdioMcpClient
+from app.mcp.config import get_enabled_server, load_mcp_config
 from app.services.repo_parser import parse_github_repo_url
+from app.services.result_evaluation_service import evaluate_generated_documents
+from app.services.github_mcp_context_service import GITHUB_MCP_ALLOWED_TOOLS, build_github_mcp_context
 from app.services.history_service import add_history_record
+from app.services.mcp_tool_service import McpToolService
 from app.services.tool_log_service import record_tool_call
 
 T = TypeVar("T")
@@ -29,14 +35,14 @@ logger = logging.getLogger(__name__)
 
 
 def run_codebase_analysis_workflow(repo_url: str) -> AnalyzeRepoResponse:
-    return _run_codebase_analysis_workflow(repo_url=repo_url, force_mock=False)
+    return _run_codebase_analysis_workflow(repo_url=repo_url)
 
 
-def run_mock_codebase_analysis_workflow(repo_url: str) -> AnalyzeRepoResponse:
-    return _run_codebase_analysis_workflow(repo_url=repo_url, force_mock=True)
+def require_llm_configuration() -> None:
+    _require_llm_api_key()
 
 
-def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> AnalyzeRepoResponse:
+def _run_codebase_analysis_workflow(*, repo_url: str) -> AnalyzeRepoResponse:
     analysis_started_at = datetime.now(UTC)
     analysis_started = perf_counter()
     steps: list[AgentStep] = []
@@ -45,16 +51,16 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
     parsed_repo: RepoParseResponse | None = None
     core_files: list[CoreFileSummary] = []
     repo_scan_metrics = RepoScanMetrics()
-    use_mock = _should_use_mock(force_mock=force_mock)
-    logger.info("[workflow] 开始分析 | repo_url=%s | mode=%s", repo_url, "mock" if use_mock else "real")
+    logger.info("[workflow] started | repo_url=%s | mode=real", repo_url)
 
     try:
+        api_key = _require_llm_api_key()
         parsed_repo = _run_stage(
         step_recorder=step_recorder,
         tool_logs=tool_logs,
         key="parse_repo_url",
-        title="解析 GitHub URL",
-        description="从仓库地址中提取 owner/repo，并规范化 .git 后缀。",
+        title="Parse GitHub URL",
+        description="Run workflow stage",
         tool_name="parse_github_repo_url",
         input_summary=repo_url,
         input_payload={"repo_url": repo_url},
@@ -67,8 +73,8 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         step_recorder=step_recorder,
         tool_logs=tool_logs,
         key="clone_repository",
-        title="克隆公开仓库",
-        description="使用 GitPython 将公开仓库克隆到 temp_repos 目录。",
+        title="Clone repository",
+        description="Run workflow stage",
         tool_name="clone_repository",
         input_summary=parsed_repo.repo_url,
         input_payload={"repo_url": parsed_repo.repo_url, "temp_repo_dir": str(settings.temp_repo_path)},
@@ -83,8 +89,8 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         step_recorder=step_recorder,
         tool_logs=tool_logs,
         key="build_file_tree",
-        title="生成目录树",
-        description="过滤依赖、构建产物、缓存和 Git 元数据后生成目录结构。",
+        title="Build file tree",
+        description="Run workflow stage",
         tool_name="build_file_tree",
         input_summary=str(local_path),
         input_payload={
@@ -97,7 +103,7 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
             max_depth=settings.max_file_tree_depth,
             max_entries=settings.max_file_tree_entries,
         ),
-        output_summary=lambda result: f"返回 {len(result)} 个顶层节点",
+        output_summary=lambda result: f"Returned {len(result)} top-level nodes",
         output_payload=lambda result: {"top_level_nodes": len(result)},
         )
 
@@ -105,13 +111,13 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         step_recorder=step_recorder,
         tool_logs=tool_logs,
         key="read_basic_files",
-        title="读取基础文件",
-        description="读取 README、package.json、requirements.txt、pyproject.toml 等基础文件摘要。",
+        title="Read basic files",
+        description="Run workflow stage",
         tool_name="read_basic_files",
         input_summary=f"max_bytes={settings.max_basic_file_bytes}",
         input_payload={"max_bytes": settings.max_basic_file_bytes},
         action=lambda: read_basic_files(local_path, max_bytes=settings.max_basic_file_bytes),
-        output_summary=lambda result: f"读取 {len(result)} 个基础文件",
+        output_summary=lambda result: f"Read {len(result)} basic files",
         output_payload=lambda result: {"read_files": [file.path for file in result]},
         related_files=lambda result: [file.path for file in result],
         )
@@ -120,8 +126,8 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         step_recorder=step_recorder,
         tool_logs=tool_logs,
         key="select_core_files",
-        title="筛选并读取核心文件",
-        description="按基础文件、入口文件和核心目录规则筛选 5 到 12 个候选文件，并读取摘要。",
+        title="Select core files",
+        description="Run workflow stage",
         tool_name="select_core_files",
         input_summary=f"max_files={settings.max_core_files}, max_bytes={settings.max_core_file_bytes}",
         input_payload={"max_files": settings.max_core_files, "max_bytes": settings.max_core_file_bytes},
@@ -130,7 +136,7 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
             max_files=settings.max_core_files,
             max_bytes=settings.max_core_file_bytes,
         ),
-        output_summary=lambda result: f"候选 {result[1].candidate_core_files} 个，选出 {len(result[0])} 个核心文件",
+        output_summary=lambda result: f"Selected {len(result[0])} core files",
         output_payload=lambda result: {
             "candidate_core_files": result[1].candidate_core_files,
             "selected_files": [file.path for file in result[0]],
@@ -138,13 +144,17 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         },
         related_files=lambda result: [file.path for file in result[0]],
         )
+        context_quality_report = build_context_quality_report(
+            selection_metrics=selection_metrics,
+            core_files=core_files,
+        )
 
         analysis_context = _run_stage(
         step_recorder=step_recorder,
         tool_logs=tool_logs,
         key="build_analysis_context",
-        title="构建 AI 分析上下文",
-        description="把仓库信息、基础文件摘要和核心文件摘要整理为模型输入上下文。",
+        title="Build analysis context",
+        description="Run workflow stage",
         tool_name="build_analysis_context",
         input_summary=f"basic_files={len(basic_files)}, core_files={len(core_files)}",
         input_payload={
@@ -156,7 +166,7 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
             basic_files=basic_files,
             core_files=core_files,
         ),
-        output_summary=lambda result: f"上下文 {len(result)} 字符",
+        output_summary=lambda result: f"Context has {len(result)} characters",
         output_payload=lambda result: {
             "context_chars": len(result),
             "used_for_context": [file.path for file in core_files if file.used_for_context],
@@ -164,77 +174,44 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         related_files=lambda _: [file.path for file in core_files if file.used_for_context],
         )
 
-        llm_call_records: list = []
-        if use_mock:
-            _record_skipped_tool(
-            step_recorder,
-            tool_logs,
-            key="generate_real_ai_documents",
-            title="调用 LLM 生成 Markdown",
-            description="当前为 mock 模式或未配置 LLM API Key，因此跳过真实 AI 调用。",
-            tool_name="llm_service.generate_markdown_documents",
-            reason="mock 模式启用或缺少 LLM API Key",
-            input_payload={"provider": _llm_provider(), "model": _llm_model(), "base_url": _llm_base_url()},
-            )
-            documents = _run_stage(
+        github_mcp_context = _fetch_optional_github_mcp_context(
             step_recorder=step_recorder,
             tool_logs=tool_logs,
-            key="generate_mock_documents",
-            title="生成 mock Markdown 文档",
-            description="使用本地 mock 生成器基于已读取文件摘要生成演示文档。",
-            tool_name="generate_mock_documents",
-            input_summary=f"core_files={len(core_files)}, basic_files={len(basic_files)}",
-            input_payload={
-                "basic_files": [file.path for file in basic_files],
-                "core_files": [file.path for file in core_files],
-                "context_chars": len(analysis_context),
-            },
-            action=lambda: _build_mock_markdown_documents(parsed_repo, basic_files, core_files),
-            output_summary=lambda result: f"生成 {len(result)} 份 mock Markdown",
-            output_payload=lambda result: {"documents": [filename for _, filename, _ in result]},
-            related_files=lambda _: [file.path for file in core_files],
-            )
-        else:
-            _record_skipped_tool(
-            step_recorder,
-            tool_logs,
-            key="generate_mock_documents",
-            title="生成 mock Markdown 文档",
-            description="已配置真实 AI 调用，因此跳过 mock 文档生成。",
-            tool_name="generate_mock_documents",
-            reason="真实 AI 模式已启用",
-            input_payload={"mock_mode": False},
-            )
-            recorder = LLMCallService(provider=_llm_provider(), model=_llm_model())
-            documents = _run_stage(
-            step_recorder=step_recorder,
-            tool_logs=tool_logs,
-            key="generate_real_ai_documents",
-            title="调用 LLM 生成 Markdown",
-            description="通过 llm_service 统一调用 OpenAI-compatible API，并要求文档引用已提供的具体文件路径。",
-            tool_name="llm_service.generate_markdown_documents",
-            input_summary=f"provider={_llm_provider()}, model={_llm_model()}, docs={len(REAL_DOCUMENT_PROMPTS)}",
-            input_payload={"provider": _llm_provider(), "model": _llm_model(), "base_url": _llm_base_url(), "document_count": len(REAL_DOCUMENT_PROMPTS)},
-            action=lambda: generate_markdown_documents(
-                document_prompts=REAL_DOCUMENT_PROMPTS,
-                context=analysis_context,
-                api_key=_llm_api_key(),
-                model=_llm_model(),
-                base_url=_llm_base_url(),
-                recorder=recorder,
-            ),
-            output_summary=lambda result: f"生成 {len(result)} 份真实 AI Markdown",
-            output_payload=lambda result: {"documents": [filename for _, filename, _ in result]},
-            related_files=lambda _: [file.path for file in core_files],
-            )
-            llm_call_records = recorder.records
+            parsed_repo=parsed_repo,
+        )
+        if github_mcp_context:
+            analysis_context = f"{analysis_context}\n\n{github_mcp_context}"
+
+        recorder = LLMCallService(provider=_llm_provider(), model=_llm_model())
+        documents = _run_stage(
+        step_recorder=step_recorder,
+        tool_logs=tool_logs,
+        key="generate_real_ai_documents",
+        title="Generate Markdown with LLM",
+        description="Run workflow stage",
+        tool_name="llm_service.generate_markdown_documents",
+        input_summary=f"provider={_llm_provider()}, model={_llm_model()}, docs={len(REAL_DOCUMENT_PROMPTS)}",
+        input_payload={"provider": _llm_provider(), "model": _llm_model(), "base_url": _llm_base_url(), "document_count": len(REAL_DOCUMENT_PROMPTS)},
+        action=lambda: generate_markdown_documents(
+            document_prompts=REAL_DOCUMENT_PROMPTS,
+            context=analysis_context,
+            api_key=api_key,
+            model=_llm_model(),
+            base_url=_llm_base_url(),
+            recorder=recorder,
+        ),
+        output_summary=lambda result: f"Generated {len(result)} Markdown documents",
+        output_payload=lambda result: {"documents": [filename for _, filename, _ in result]},
+        related_files=lambda _: [file.path for file in core_files],
+        )
+        llm_call_records = recorder.records
 
         saved_documents, docs_dir = _run_stage(
         step_recorder=step_recorder,
         tool_logs=tool_logs,
         key="save_markdown_docs",
-        title="保存 Markdown 文档",
-        description="将 Markdown 文档保存到 generated_docs 目录，前端读取响应内容进行预览。",
+        title="Save Markdown documents",
+        description="Run workflow stage",
         tool_name="save_markdown_documents",
         input_summary=settings.generated_docs_path.as_posix(),
         input_payload={"docs_root": settings.generated_docs_path.as_posix(), "document_count": len(documents)},
@@ -247,16 +224,39 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         output_summary=lambda result: result[1],
         output_payload=lambda result: {"docs_dir": result[1], "documents": [document.path for document in result[0]]},
         )
+        result_evaluation = _run_stage(
+        step_recorder=step_recorder,
+        tool_logs=tool_logs,
+        key="evaluate_generated_documents",
+        title="Evaluate generated documents",
+        description="Run deterministic output checks",
+        tool_name="evaluate_generated_documents",
+        input_summary=f"documents={len(saved_documents)}, context_files={len(core_files)}",
+        input_payload={
+            "document_count": len(saved_documents),
+            "context_file_count": len([file for file in core_files if file.used_for_context]),
+        },
+        action=lambda: evaluate_generated_documents(documents=saved_documents, core_files=core_files),
+        output_summary=lambda result: f"Quality scores: citations={result.textcitation_score}, coverage={result.coverage_score}",
+        output_payload=lambda result: {
+            "textcitation_score": result.textcitation_score,
+            "coverage_score": result.coverage_score,
+            "hallucination_risk": result.hallucination_risk,
+            "usefulness_score": result.usefulness_score,
+            "issue_count": len(result.issues),
+        },
+        related_files=lambda _: [file.path for file in core_files if file.used_for_context],
+        )
         analysis_duration_ms = int((perf_counter() - analysis_started) * 1000)
         metrics = build_mock_analysis_metrics(
         selection_metrics=selection_metrics,
         core_files=core_files,
         documents=saved_documents,
         analysis_duration_ms=analysis_duration_ms,
-        used_mock_ai=use_mock,
+        used_mock_ai=False,
         provider=_llm_provider(),
         model=_llm_model(),
-        prompt_template_count=0 if use_mock else len(REAL_DOCUMENT_PROMPTS),
+        prompt_template_count=len(REAL_DOCUMENT_PROMPTS),
         llm_call_records=llm_call_records,
         agent_steps=steps,
         tool_logs=tool_logs,
@@ -268,7 +268,6 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
         repo=parsed_repo.repo,
         started_at=analysis_started_at,
         metrics=metrics,
-        mock_mode=use_mock,
         )
         _record_history(
             repo_url=parsed_repo.repo_url,
@@ -280,11 +279,11 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
             docs_dir=docs_dir,
             core_files_count=len(core_files),
             error_message=None,
-            mock_mode=use_mock,
+            mock_mode=False,
+            metrics=metrics,
         )
         logger.info(
-            "[workflow] 分析完成 | mode=%s | duration_ms=%d | docs=%d",
-            "mock" if use_mock else "real",
+            "[workflow] completed | mode=real | duration_ms=%d | docs=%d",
             analysis_duration_ms,
             len(saved_documents),
         )
@@ -296,18 +295,19 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
             file_tree=file_tree,
             basic_files=basic_files,
             core_files=core_files,
+            context_quality_report=context_quality_report,
             agent_steps=steps,
             tool_logs=tool_logs,
             documents=saved_documents,
+            result_evaluation=result_evaluation,
             docs_dir=docs_dir,
             metrics=metrics,
-            mock_mode=use_mock,
+            mock_mode=False,
         )
     except AppError as exc:
         logger.error(
-            "[workflow] 分析失败 | repo_url=%s | mode=%s | code=%s | message=%s",
+            "[workflow] failed | repo_url=%s | mode=real | code=%s | message=%s",
             repo_url,
-            "mock" if use_mock else "real",
             exc.code,
             exc.message,
         )
@@ -321,7 +321,7 @@ def _run_codebase_analysis_workflow(*, repo_url: str, force_mock: bool) -> Analy
             docs_dir="",
             core_files_count=len(core_files),
             error_message=exc.detail or exc.message,
-            mock_mode=use_mock,
+            mock_mode=False,
         )
         raise
 
@@ -341,13 +341,14 @@ def _run_stage(
     output_payload: Callable[[T], dict[str, Any]],
     related_files: Callable[[T], list[str]] | None = None,
 ) -> T:
+    assert_tool_allowed(tool_name)
     step = step_recorder.start(
         key=key,
         title=title,
         description=description,
         metadata={"tool_name": tool_name, "input": input_payload},
     )
-    logger.info("[stage] 开始：%s", title)
+    logger.info("[stage] started: %s", title)
     started = perf_counter()
     try:
         result = action()
@@ -367,7 +368,7 @@ def _run_stage(
         app_error = AppError(
             status_code=500,
             code="UNKNOWN_ERROR",
-            message="仓库分析流程执行失败",
+            message="Codebase analysis workflow failed",
             detail=str(exc),
         )
         _append_failed_records(
@@ -397,7 +398,7 @@ def _run_stage(
         related_files=related,
         duration_ms=duration_ms,
     )
-    logger.info("[stage] 完成：%s | duration_ms=%d", title, duration_ms)
+    logger.info("[stage] completed: %s | duration_ms=%d", title, duration_ms)
     return result
 
 
@@ -413,7 +414,7 @@ def _append_failed_records(
 ) -> None:
     duration_ms = int((perf_counter() - started) * 1000)
     logger.error(
-        "[stage] 失败：%s | code=%s | message=%s | duration_ms=%d",
+        "[stage] failed: %s | code=%s | message=%s | duration_ms=%d",
         step.title,
         error.code,
         error.message,
@@ -429,7 +430,7 @@ def _append_failed_records(
         tool_name=tool_name,
         status="failed",
         input_summary=input_summary,
-        output_summary="执行失败",
+        output_summary="Failed",
         input_payload=input_payload,
         output_payload={"error_code": error.code},
         duration_ms=duration_ms,
@@ -450,7 +451,7 @@ def _record_skipped_tool(
     reason: str,
     input_payload: dict[str, Any],
 ) -> None:
-    logger.info("[stage] 跳过：%s | reason=%s", title, reason)
+    logger.info("[stage] skipped: %s | reason=%s", title, reason)
     step_recorder.skip(
         key=key,
         title=title,
@@ -463,7 +464,7 @@ def _record_skipped_tool(
         tool_name=tool_name,
         status="skipped",
         input_summary=reason,
-        output_summary="已跳过",
+        output_summary="Skipped",
         input_payload=input_payload,
         output_payload={"reason": reason},
         duration_ms=0,
@@ -471,160 +472,61 @@ def _record_skipped_tool(
     )
 
 
-def _build_mock_markdown_documents(
+def _fetch_optional_github_mcp_context(
+    *,
+    step_recorder: AgentStepRecorder,
+    tool_logs: list[ToolCallLog],
     parsed_repo: RepoParseResponse,
-    basic_files: list[BasicFileSummary],
-    core_files: list[CoreFileSummary],
-) -> list[tuple[str, str, str]]:
-    repo_name = f"{parsed_repo.owner}/{parsed_repo.repo}"
-    basic_lines = _file_lines(basic_files)
-    core_lines = _core_file_lines(core_files)
-    context_files = ", ".join(f"`{file.path}`" for file in core_files if file.used_for_context) or "不确定"
+) -> str:
+    service = _github_mcp_service()
+    input_payload = {"owner": parsed_repo.owner, "repo": parsed_repo.repo}
+    if service is None:
+        _record_skipped_tool(
+            step_recorder,
+            tool_logs,
+            key="fetch_github_mcp_context",
+            title="Fetch GitHub MCP context",
+            description="Fetch read-only GitHub collaboration context through MCP",
+            tool_name="fetch_github_mcp_context",
+            reason="GitHub MCP server is not configured",
+            input_payload=input_payload,
+        )
+        return ""
 
-    return [
-        (
-            "项目概览",
-            "01-项目概览.md",
-            f"""# {repo_name} 项目概览
-
-> 本文档由 mock 生成器基于仓库目录、基础文件摘要和核心文件摘要生成，未调用真实 AI。
-
-## 项目事实
-
-- 仓库地址：{parsed_repo.repo_url}
-- 已读取基础文件：{len(basic_files)} 个
-- 已筛选核心文件：{len(core_files)} 个
-
-## 基础文件
-
-{basic_lines}
-
-## 核心文件
-
-{core_lines}
-""",
-        ),
-        (
-            "技术栈分析",
-            "02-技术栈分析.md",
-            f"""# 技术栈分析
-
-## 可确认事实
-
-{_tech_stack_lines(core_files, basic_files)}
-
-## 不确定信息
-
-- 具体框架版本、运行命令和部署方式需要继续读取完整配置后确认。
-""",
-        ),
-        (
-            "核心模块分析",
-            "03-核心模块分析.md",
-            f"""# 核心模块分析
-
-## 核心文件候选
-
-{core_lines}
-
-## 用于上下文的文件
-
-- {context_files}
-""",
-        ),
-        (
-            "核心流程说明",
-            "04-核心流程说明.md",
-            f"""# 核心流程说明
-
-1. 解析 GitHub URL：`{parsed_repo.repo_url}`
-2. 克隆公开仓库到 `temp_repos/`
-3. 过滤无关目录并生成文件树
-4. 读取基础文件摘要
-5. 筛选并读取核心文件
-6. 构建分析上下文
-7. 生成并保存 Markdown 文档
-""",
-        ),
-        (
-            "面试问题与回答",
-            "05-面试问题与回答.md",
-            """# 面试问题与回答
-
-## Q1：为什么要先筛选核心文件？
-
-A：仓库文件很多，直接读取全部文件会带来性能和上下文成本问题。本项目先用规则筛选核心文件，再生成分析上下文。
-
-## Q2：mock 生成和真实 AI 生成有什么区别？
-
-A：mock 生成只基于已读取摘要拼接模板，不做语义推理。真实 AI 生成会调用 LLM，并要求引用具体文件路径。
-
-## Q3：如何知道哪些文件进入了 AI 上下文？
-
-A：后端在核心文件结构和工具调用日志中都返回 `used_for_context` 文件列表，前端直接展示这些字段。
-""",
-        ),
-        (
-            "简历描述",
-            "06-简历描述.md",
-            """# 简历描述
-
-- 设计并实现 GitHub 仓库分析工作流，支持 URL 解析、仓库克隆、文件树生成、核心文件筛选和 Markdown 文档保存。
-- 为 Agent 工作流补充结构化步骤状态和工具调用日志，让分析过程可解释、可复盘。
-""",
-        ),
-        (
-            "可贡献 PR 方向",
-            "07-可贡献PR方向.md",
-            """# 可贡献 PR 方向
-
-- 为核心文件筛选规则增加更多语言生态入口文件。
-- 将一次性返回升级为 SSE，让步骤状态实时更新。
-- 增加历史记录中的步骤和工具日志回看能力。
-""",
-        ),
-    ]
-
-
-def _file_lines(files: list[BasicFileSummary]) -> str:
-    if not files:
-        return "- 不确定：未读取到基础文件。"
-    return "\n".join(f"- `{file.path}`（{file.file_type}）：大小 {file.size} bytes" for file in files)
-
-
-def _core_file_lines(core_files: list[CoreFileSummary]) -> str:
-    if not core_files:
-        return "- 不确定：未筛选到可读核心文件。"
-    return "\n".join(
-        f"- `{file.path}`（{file.file_type}）：{file.reason}，大小 {file.size} bytes"
-        for file in core_files
+    return _run_stage(
+        step_recorder=step_recorder,
+        tool_logs=tool_logs,
+        key="fetch_github_mcp_context",
+        title="Fetch GitHub MCP context",
+        description="Fetch read-only GitHub collaboration context through MCP",
+        tool_name="fetch_github_mcp_context",
+        input_summary=f"{parsed_repo.owner}/{parsed_repo.repo}",
+        input_payload=input_payload,
+        action=lambda: build_github_mcp_context(parsed_repo=parsed_repo, tool_logs=tool_logs, service=service),
+        output_summary=lambda result: f"GitHub MCP context has {len(result)} characters",
+        output_payload=lambda result: {"context_chars": len(result), "enabled": True},
     )
 
 
-def _tech_stack_lines(core_files: list[CoreFileSummary], basic_files: list[BasicFileSummary]) -> str:
-    paths = {file.path.lower() for file in [*core_files, *basic_files]}
-    lines: list[str] = []
-    if any(path.endswith("package.json") for path in paths):
-        lines.append("- `package.json` 存在：可确认包含 Node.js 生态配置。")
-    if any(path.endswith("pyproject.toml") for path in paths):
-        lines.append("- `pyproject.toml` 存在：可确认包含 Python 项目配置。")
-    if any(path.endswith("requirements.txt") for path in paths):
-        lines.append("- `requirements.txt` 存在：可确认包含 Python 依赖清单。")
-    if any(path.endswith(".vue") for path in paths):
-        lines.append("- `.vue` 文件存在：可确认包含 Vue 单文件组件。")
-    if any(path.endswith(".ts") or path.endswith(".tsx") for path in paths):
-        lines.append("- TypeScript 文件存在：可确认包含 TypeScript 代码。")
-    if not lines:
-        lines.append("- 不确定：当前摘要不足以判断主要技术栈。")
-    return "\n".join(lines)
-
-
-def _should_use_mock(*, force_mock: bool) -> bool:
-    if force_mock:
-        return True
-    if getattr(settings, "mock_mode", True):
-        return True
-    return not has_llm_credentials(_llm_api_key())
+def _github_mcp_service() -> McpToolService | None:
+    config_file = getattr(settings, "mcp_config_file", None)
+    config = load_mcp_config(
+        config_file,
+        env_values={"GITHUB_PERSONAL_ACCESS_TOKEN": getattr(settings, "github_personal_access_token", None)},
+    )
+    server = get_enabled_server(config, "github")
+    if server is None:
+        return None
+    if getattr(settings, "mcp_readonly", True) and not server.readonly:
+        return None
+    allowed_tools = set(server.allowed_tools) & GITHUB_MCP_ALLOWED_TOOLS
+    if not allowed_tools:
+        return None
+    return McpToolService(
+        client=StdioMcpClient([server]),
+        server_name=server.name,
+        allowed_tools=allowed_tools,
+    )
 
 
 def _llm_provider() -> str:
@@ -635,8 +537,19 @@ def _llm_api_key() -> str | None:
     return getattr(settings, "llm_api_key", None) or getattr(settings, "openai_api_key", None)
 
 
+def _require_llm_api_key() -> str:
+    api_key = _llm_api_key()
+    if not has_llm_credentials(api_key):
+        raise AppError(
+            status_code=400,
+            code="LLM_API_KEY_MISSING",
+            message="未配置 LLM API Key，无法调用真实 AI",
+        )
+    return api_key.strip()
+
+
 def _llm_model() -> str:
-    return getattr(settings, "llm_model", None) or getattr(settings, "openai_model", None) or "gpt-4.1-mini"
+    return getattr(settings, "llm_model", None) or getattr(settings, "openai_model", None) or "deepseek-v4-flash"
 
 
 def _llm_base_url() -> str | None:
@@ -650,11 +563,10 @@ def _record_analysis_metrics(
     repo: str,
     started_at: datetime,
     metrics: MockAnalysisMetrics,
-    mock_mode: bool,
 ) -> None:
     record_repo_operation_metrics(
         RepoOperationMetrics(
-            operation="agent_analyze_mock" if mock_mode else "agent_analyze",
+            operation="agent_analyze",
             status="success",
             repo_url=repo_url,
             owner=owner,
@@ -714,6 +626,7 @@ def _record_history(
     core_files_count: int,
     error_message: str | None,
     mock_mode: bool,
+    metrics: MockAnalysisMetrics | None = None,
 ) -> None:
     history_path = getattr(settings, "history_path", None)
     if history_path is None:
@@ -730,6 +643,7 @@ def _record_history(
         core_files_count=core_files_count,
         error_message=error_message,
         mock_mode=mock_mode,
+        metrics=metrics,
     )
 
 
@@ -738,7 +652,6 @@ def run_codebase_analysis_job(
     job_id: str,
     repo_url: str,
     job_service: AnalysisJobService,
-    force_mock: bool = False,
 ) -> None:
     analysis_started_at = datetime.now(UTC)
     analysis_started = perf_counter()
@@ -748,14 +661,13 @@ def run_codebase_analysis_job(
     parsed_repo: RepoParseResponse | None = None
     core_files: list[CoreFileSummary] = []
     repo_scan_metrics = RepoScanMetrics()
-    documents: list[tuple[str, str, str]] = []
     saved_documents = []
     docs_dir = ""
-    use_mock = _should_use_mock(force_mock=force_mock)
 
     try:
-        job_service.update_status(job_id, "running", mock_mode=use_mock)
-        job_service.append_event(job_id, "job_started", {"repo_url": repo_url, "mock_mode": use_mock})
+        api_key = _require_llm_api_key()
+        job_service.update_status(job_id, "running", mock_mode=False)
+        job_service.append_event(job_id, "job_started", {"repo_url": repo_url, "mock_mode": False})
 
         parsed_repo = _run_job_stage(
             job_id=job_id,
@@ -763,8 +675,8 @@ def run_codebase_analysis_job(
             step_recorder=step_recorder,
             tool_logs=tool_logs,
             key="parse_repo_url",
-            title="解析 GitHub URL",
-            description="从仓库地址中提取 owner/repo，并规范化 .git 后缀。",
+            title="Parse GitHub URL",
+            description="Run workflow stage",
             tool_name="parse_github_repo_url",
             input_summary=repo_url,
             input_payload={"repo_url": repo_url},
@@ -772,7 +684,7 @@ def run_codebase_analysis_job(
             output_summary=lambda result: f"{result.owner}/{result.repo}",
             output_payload=lambda result: {"owner": result.owner, "repo": result.repo, "repo_url": result.repo_url},
         )
-        job_service.update_status(job_id, "running", owner=parsed_repo.owner, repo=parsed_repo.repo, mock_mode=use_mock)
+        job_service.update_status(job_id, "running", owner=parsed_repo.owner, repo=parsed_repo.repo, mock_mode=False)
 
         local_path = _run_job_stage(
             job_id=job_id,
@@ -780,8 +692,8 @@ def run_codebase_analysis_job(
             step_recorder=step_recorder,
             tool_logs=tool_logs,
             key="clone_repository",
-            title="克隆公开仓库",
-            description="使用 GitPython 将公开仓库克隆到 temp_repos 目录。",
+            title="Clone repository",
+            description="Run workflow stage",
             tool_name="clone_repository",
             input_summary=parsed_repo.repo_url,
             input_payload={"repo_url": parsed_repo.repo_url, "temp_repo_dir": str(settings.temp_repo_path)},
@@ -798,8 +710,8 @@ def run_codebase_analysis_job(
             step_recorder=step_recorder,
             tool_logs=tool_logs,
             key="build_file_tree",
-            title="生成目录树",
-            description="过滤依赖、构建产物、缓存和 Git 元数据后生成目录结构。",
+            title="Build file tree",
+            description="Run workflow stage",
             tool_name="build_file_tree",
             input_summary=str(local_path),
             input_payload={
@@ -812,7 +724,7 @@ def run_codebase_analysis_job(
                 max_depth=settings.max_file_tree_depth,
                 max_entries=settings.max_file_tree_entries,
             ),
-            output_summary=lambda result: f"返回 {len(result)} 个顶层节点",
+            output_summary=lambda result: f"Returned {len(result)} top-level nodes",
             output_payload=lambda result: {"top_level_nodes": len(result)},
         )
         job_service.put_artifact(job_id, "file_tree", [node.model_dump() for node in file_tree])
@@ -823,13 +735,13 @@ def run_codebase_analysis_job(
             step_recorder=step_recorder,
             tool_logs=tool_logs,
             key="read_basic_files",
-            title="读取基础文件",
-            description="读取 README、package.json、requirements.txt、pyproject.toml 等基础文件摘要。",
+            title="Read basic files",
+            description="Run workflow stage",
             tool_name="read_basic_files",
             input_summary=f"max_bytes={settings.max_basic_file_bytes}",
             input_payload={"max_bytes": settings.max_basic_file_bytes},
             action=lambda: read_basic_files(local_path, max_bytes=settings.max_basic_file_bytes),
-            output_summary=lambda result: f"读取 {len(result)} 个基础文件",
+            output_summary=lambda result: f"Read {len(result)} basic files",
             output_payload=lambda result: {"read_files": [file.path for file in result]},
             related_files=lambda result: [file.path for file in result],
         )
@@ -841,8 +753,8 @@ def run_codebase_analysis_job(
             step_recorder=step_recorder,
             tool_logs=tool_logs,
             key="select_core_files",
-            title="筛选并读取核心文件",
-            description="按基础文件、入口文件和核心目录规则筛选 5 到 12 个候选文件，并读取摘要。",
+            title="Select core files",
+            description="Run workflow stage",
             tool_name="select_core_files",
             input_summary=f"max_files={settings.max_core_files}, max_bytes={settings.max_core_file_bytes}",
             input_payload={"max_files": settings.max_core_files, "max_bytes": settings.max_core_file_bytes},
@@ -851,7 +763,7 @@ def run_codebase_analysis_job(
                 max_files=settings.max_core_files,
                 max_bytes=settings.max_core_file_bytes,
             ),
-            output_summary=lambda result: f"候选 {result[1].candidate_core_files} 个，选出 {len(result[0])} 个核心文件",
+            output_summary=lambda result: f"Selected {len(result[0])} core files",
             output_payload=lambda result: {
                 "candidate_core_files": result[1].candidate_core_files,
                 "selected_files": [file.path for file in result[0]],
@@ -859,16 +771,21 @@ def run_codebase_analysis_job(
             },
             related_files=lambda result: [file.path for file in result[0]],
         )
+        context_quality_report = build_context_quality_report(
+            selection_metrics=selection_metrics,
+            core_files=core_files,
+        )
         job_service.put_artifact(job_id, "core_files", [file.model_dump() for file in core_files])
         job_service.append_event(
             job_id,
             "stage_completed",
             {
                 "key": "repo_loaded",
-                "title": "仓库读取完成",
+                "title": "Repository loaded",
                 "file_tree": [node.model_dump() for node in file_tree],
                 "basic_files": [file.model_dump() for file in basic_files],
                 "core_files": [file.model_dump() for file in core_files],
+                "context_quality_report": context_quality_report.model_dump(),
             },
         )
         _emit_metrics_update(
@@ -880,7 +797,7 @@ def run_codebase_analysis_job(
             core_files=core_files,
             documents=saved_documents,
             analysis_started=analysis_started,
-            use_mock=use_mock,
+            used_mock_ai=False,
             llm_call_records=[],
             steps=steps,
             tool_logs=tool_logs,
@@ -892,133 +809,109 @@ def run_codebase_analysis_job(
             step_recorder=step_recorder,
             tool_logs=tool_logs,
             key="build_analysis_context",
-            title="构建 AI 分析上下文",
-            description="把仓库信息、基础文件摘要和核心文件摘要整理为模型输入上下文。",
+            title="Build analysis context",
+            description="Run workflow stage",
             tool_name="build_analysis_context",
             input_summary=f"basic_files={len(basic_files)}, core_files={len(core_files)}",
             input_payload={"basic_files": [file.path for file in basic_files], "core_files": [file.path for file in core_files]},
             action=lambda: build_analysis_context(parsed_repo=parsed_repo, basic_files=basic_files, core_files=core_files),
-            output_summary=lambda result: f"上下文 {len(result)} 字符",
+            output_summary=lambda result: f"Context has {len(result)} characters",
             output_payload=lambda result: {"context_chars": len(result), "used_for_context": [file.path for file in core_files if file.used_for_context]},
             related_files=lambda _: [file.path for file in core_files if file.used_for_context],
         )
 
+        github_mcp_context = _fetch_optional_github_mcp_context(
+            step_recorder=step_recorder,
+            tool_logs=tool_logs,
+            parsed_repo=parsed_repo,
+        )
+        if github_mcp_context:
+            analysis_context = f"{analysis_context}\n\n{github_mcp_context}"
+
         docs_path, docs_dir = create_markdown_docs_dir(owner=parsed_repo.owner, repo=parsed_repo.repo, docs_root=settings.generated_docs_path)
-        job_service.update_status(job_id, "running", docs_dir=docs_dir, core_files_count=len(core_files), mock_mode=use_mock)
+        job_service.update_status(job_id, "running", docs_dir=docs_dir, core_files_count=len(core_files), mock_mode=False)
         llm_call_records: list = []
         recorder = LLMCallService(provider=_llm_provider(), model=_llm_model())
 
-        if use_mock:
-            _record_skipped_tool(
-                step_recorder,
-                tool_logs,
-                key="generate_real_ai_documents",
-                title="调用 LLM 生成 Markdown",
-                description="当前为 mock 模式或未配置 LLM API Key，因此跳过真实 AI 调用。",
-                tool_name="llm_service.generate_markdown_documents",
-                reason="mock 模式启用或缺少 LLM API Key",
-                input_payload={"provider": _llm_provider(), "model": _llm_model(), "base_url": _llm_base_url()},
+        for prompt in REAL_DOCUMENT_PROMPTS:
+            _raise_if_cancelled(job_id, job_service)
+            generated = generate_markdown_documents(
+                document_prompts=[prompt],
+                context=analysis_context,
+                api_key=api_key,
+                model=_llm_model(),
+                base_url=_llm_base_url(),
+                recorder=recorder,
             )
-            documents = _build_mock_markdown_documents(parsed_repo, basic_files, core_files)
-        else:
-            _record_skipped_tool(
-                step_recorder,
-                tool_logs,
-                key="generate_mock_documents",
-                title="生成 mock Markdown 文档",
-                description="已配置真实 AI 调用，因此跳过 mock 文档生成。",
-                tool_name="generate_mock_documents",
-                reason="真实 AI 模式已启用",
-                input_payload={"mock_mode": False},
+            saved = save_markdown_document_to_dir(
+                docs_root=settings.generated_docs_path,
+                docs_dir=docs_path,
+                title=generated[0][0],
+                filename=generated[0][1],
+                content=generated[0][2],
             )
-            documents = []
-            for prompt in REAL_DOCUMENT_PROMPTS:
-                _raise_if_cancelled(job_id, job_service)
-                generated = generate_markdown_documents(
-                    document_prompts=[prompt],
-                    context=analysis_context,
-                    api_key=_llm_api_key(),
-                    model=_llm_model(),
-                    base_url=_llm_base_url(),
-                    recorder=recorder,
-                )
-                documents.extend(generated)
-                saved = save_markdown_document_to_dir(
-                    docs_root=settings.generated_docs_path,
-                    docs_dir=docs_path,
-                    title=generated[0][0],
-                    filename=generated[0][1],
-                    content=generated[0][2],
-                )
-                saved_documents.append(saved)
-                job_service.put_artifact(job_id, "documents", [document.model_dump() for document in saved_documents])
-                job_service.append_event(
-                    job_id,
-                    "document_generated",
-                    {
-                        "document": saved.model_dump(),
-                        "index": len(saved_documents),
-                        "total": len(REAL_DOCUMENT_PROMPTS),
-                    },
-                )
-                _emit_metrics_update(
-                    job_id=job_id,
-                    job_service=job_service,
-                    phase="document_generated",
-                    selection_metrics=selection_metrics,
-                    repo_scan_metrics=repo_scan_metrics,
-                    core_files=core_files,
-                    documents=saved_documents,
-                    analysis_started=analysis_started,
-                    use_mock=use_mock,
-                    llm_call_records=recorder.records,
-                    steps=steps,
-                    tool_logs=tool_logs,
-                )
-            llm_call_records = recorder.records
+            saved_documents.append(saved)
+            job_service.put_artifact(job_id, "documents", [document.model_dump() for document in saved_documents])
+            job_service.append_event(
+                job_id,
+                "document_generated",
+                {
+                    "document": saved.model_dump(),
+                    "index": len(saved_documents),
+                    "total": len(REAL_DOCUMENT_PROMPTS),
+                },
+            )
+            _emit_metrics_update(
+                job_id=job_id,
+                job_service=job_service,
+                phase="document_generated",
+                selection_metrics=selection_metrics,
+                repo_scan_metrics=repo_scan_metrics,
+                core_files=core_files,
+                documents=saved_documents,
+                analysis_started=analysis_started,
+                used_mock_ai=False,
+                llm_call_records=recorder.records,
+                steps=steps,
+                tool_logs=tool_logs,
+            )
+        llm_call_records = recorder.records
 
-        if use_mock:
-            for index, (title, filename, content) in enumerate(documents, start=1):
-                _raise_if_cancelled(job_id, job_service)
-                saved = save_markdown_document_to_dir(
-                    docs_root=settings.generated_docs_path,
-                    docs_dir=docs_path,
-                    title=title,
-                    filename=filename,
-                    content=content,
-                )
-                saved_documents.append(saved)
-                job_service.put_artifact(job_id, "documents", [document.model_dump() for document in saved_documents])
-                job_service.append_event(
-                    job_id,
-                    "document_generated",
-                    {"document": saved.model_dump(), "index": index, "total": len(documents)},
-                )
-                _emit_metrics_update(
-                    job_id=job_id,
-                    job_service=job_service,
-                    phase="document_generated",
-                    selection_metrics=selection_metrics,
-                    repo_scan_metrics=repo_scan_metrics,
-                    core_files=core_files,
-                    documents=saved_documents,
-                    analysis_started=analysis_started,
-                    use_mock=use_mock,
-                    llm_call_records=[],
-                    steps=steps,
-                    tool_logs=tool_logs,
-                )
-
+        result_evaluation = _run_job_stage(
+            job_id=job_id,
+            job_service=job_service,
+            step_recorder=step_recorder,
+            tool_logs=tool_logs,
+            key="evaluate_generated_documents",
+            title="Evaluate generated documents",
+            description="Run deterministic output checks",
+            tool_name="evaluate_generated_documents",
+            input_summary=f"documents={len(saved_documents)}, context_files={len(core_files)}",
+            input_payload={
+                "document_count": len(saved_documents),
+                "context_file_count": len([file for file in core_files if file.used_for_context]),
+            },
+            action=lambda: evaluate_generated_documents(documents=saved_documents, core_files=core_files),
+            output_summary=lambda result: f"Quality scores: citations={result.textcitation_score}, coverage={result.coverage_score}",
+            output_payload=lambda result: {
+                "textcitation_score": result.textcitation_score,
+                "coverage_score": result.coverage_score,
+                "hallucination_risk": result.hallucination_risk,
+                "usefulness_score": result.usefulness_score,
+                "issue_count": len(result.issues),
+            },
+            related_files=lambda _: [file.path for file in core_files if file.used_for_context],
+        )
         analysis_duration_ms = int((perf_counter() - analysis_started) * 1000)
         metrics = build_mock_analysis_metrics(
             selection_metrics=selection_metrics,
             core_files=core_files,
             documents=saved_documents,
             analysis_duration_ms=analysis_duration_ms,
-            used_mock_ai=use_mock,
+            used_mock_ai=False,
             provider=_llm_provider(),
             model=_llm_model(),
-            prompt_template_count=0 if use_mock else len(REAL_DOCUMENT_PROMPTS),
+            prompt_template_count=len(REAL_DOCUMENT_PROMPTS),
             llm_call_records=llm_call_records,
             agent_steps=steps,
             tool_logs=tool_logs,
@@ -1030,19 +923,6 @@ def run_codebase_analysis_job(
             repo=parsed_repo.repo,
             started_at=analysis_started_at,
             metrics=metrics,
-            mock_mode=use_mock,
-        )
-        _record_history(
-            repo_url=parsed_repo.repo_url,
-            owner=parsed_repo.owner,
-            repo=parsed_repo.repo,
-            status="success",
-            started_at=analysis_started_at,
-            completed_at=datetime.now(UTC),
-            docs_dir=docs_dir,
-            core_files_count=len(core_files),
-            error_message=None,
-            mock_mode=use_mock,
         )
         response = AnalyzeRepoResponse(
             owner=parsed_repo.owner,
@@ -1051,48 +931,43 @@ def run_codebase_analysis_job(
             file_tree=file_tree,
             basic_files=basic_files,
             core_files=core_files,
+            context_quality_report=context_quality_report,
             agent_steps=steps,
             tool_logs=tool_logs,
             documents=saved_documents,
+            result_evaluation=result_evaluation,
             docs_dir=docs_dir,
             metrics=metrics,
-            mock_mode=use_mock,
+            mock_mode=False,
         )
         job_service.put_artifact(job_id, "result", response.model_dump())
-        job_service.update_status(job_id, "success", docs_dir=docs_dir, core_files_count=len(core_files), metrics=metrics, mock_mode=use_mock)
+        job_service.update_status(job_id, "success", docs_dir=docs_dir, core_files_count=len(core_files), metrics=metrics, mock_mode=False)
+        job_service.persist_run_details(
+            job_id,
+            agent_steps=steps,
+            tool_logs=tool_logs,
+            llm_call_records=llm_call_records,
+        )
         job_service.append_event(job_id, "metrics_updated", {"phase": "completed", "metrics": metrics.model_dump()})
         job_service.append_event(job_id, "job_completed", {"result": response.model_dump(), "metrics": metrics.model_dump(), "docs_dir": docs_dir})
     except _AnalysisJobCancelled:
-        job_service.update_status(job_id, "cancelled", docs_dir=docs_dir, core_files_count=len(core_files), error_message="用户停止分析", mock_mode=use_mock)
-        job_service.append_event(job_id, "job_cancelled", {"message": "用户停止分析", "documents": [document.model_dump() for document in saved_documents]})
-        if parsed_repo is not None:
-            _record_history(
-                repo_url=parsed_repo.repo_url,
-                owner=parsed_repo.owner,
-                repo=parsed_repo.repo,
-                status="cancelled",
-                started_at=analysis_started_at,
-                completed_at=datetime.now(UTC),
-                docs_dir=docs_dir,
-                core_files_count=len(core_files),
-                error_message="用户停止分析",
-                mock_mode=use_mock,
-            )
-    except AppError as exc:
-        job_service.update_status(job_id, "failed", docs_dir=docs_dir, core_files_count=len(core_files), error_message=exc.detail or exc.message, mock_mode=use_mock)
-        job_service.append_event(job_id, "job_failed", {"code": exc.code, "message": exc.message, "detail": exc.detail, "documents": [document.model_dump() for document in saved_documents]})
-        _record_history(
-            repo_url=parsed_repo.repo_url if parsed_repo else repo_url,
-            owner=parsed_repo.owner if parsed_repo else "",
-            repo=parsed_repo.repo if parsed_repo else "",
-            status="failed",
-            started_at=analysis_started_at,
-            completed_at=datetime.now(UTC),
-            docs_dir=docs_dir,
-            core_files_count=len(core_files),
-            error_message=exc.detail or exc.message,
-            mock_mode=use_mock,
+        job_service.update_status(job_id, "cancelled", docs_dir=docs_dir, core_files_count=len(core_files), error_message="Analysis stopped by user", mock_mode=False)
+        job_service.persist_run_details(
+            job_id,
+            agent_steps=steps,
+            tool_logs=tool_logs,
+            llm_call_records=[],
         )
+        job_service.append_event(job_id, "job_cancelled", {"message": "Analysis stopped by user", "documents": [document.model_dump() for document in saved_documents]})
+    except AppError as exc:
+        job_service.update_status(job_id, "failed", docs_dir=docs_dir, core_files_count=len(core_files), error_message=exc.detail or exc.message, mock_mode=False)
+        job_service.persist_run_details(
+            job_id,
+            agent_steps=steps,
+            tool_logs=tool_logs,
+            llm_call_records=[],
+        )
+        job_service.append_event(job_id, "job_failed", {"code": exc.code, "message": exc.message, "detail": exc.detail, "documents": [document.model_dump() for document in saved_documents]})
     except Exception as exc:
         logger.exception("[analyze-job] unexpected failure | job_id=%s | repo_url=%s", job_id, repo_url)
         message = str(exc) or "Unexpected analysis failure"
@@ -1102,7 +977,13 @@ def run_codebase_analysis_job(
             docs_dir=docs_dir,
             core_files_count=len(core_files),
             error_message=message,
-            mock_mode=use_mock,
+            mock_mode=False,
+        )
+        job_service.persist_run_details(
+            job_id,
+            agent_steps=steps,
+            tool_logs=tool_logs,
+            llm_call_records=[],
         )
         job_service.append_event(
             job_id,
@@ -1113,18 +994,6 @@ def run_codebase_analysis_job(
                 "detail": message,
                 "documents": [document.model_dump() for document in saved_documents],
             },
-        )
-        _record_history(
-            repo_url=parsed_repo.repo_url if parsed_repo else repo_url,
-            owner=parsed_repo.owner if parsed_repo else "",
-            repo=parsed_repo.repo if parsed_repo else "",
-            status="failed",
-            started_at=analysis_started_at,
-            completed_at=datetime.now(UTC),
-            docs_dir=docs_dir,
-            core_files_count=len(core_files),
-            error_message=message,
-            mock_mode=use_mock,
         )
 
 
@@ -1189,7 +1058,7 @@ def _emit_metrics_update(
     core_files: list[CoreFileSummary],
     documents: list,
     analysis_started: float,
-    use_mock: bool,
+    used_mock_ai: bool,
     llm_call_records: list,
     steps: list[AgentStep],
     tool_logs: list[ToolCallLog],
@@ -1200,10 +1069,10 @@ def _emit_metrics_update(
         core_files=core_files,
         documents=documents,
         analysis_duration_ms=int((perf_counter() - analysis_started) * 1000),
-        used_mock_ai=use_mock,
+        used_mock_ai=used_mock_ai,
         provider=_llm_provider(),
         model=_llm_model(),
-        prompt_template_count=0 if use_mock else len(REAL_DOCUMENT_PROMPTS),
+        prompt_template_count=len(REAL_DOCUMENT_PROMPTS),
         llm_call_records=llm_call_records,
         agent_steps=steps,
         tool_logs=tool_logs,

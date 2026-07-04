@@ -3,6 +3,7 @@ from typing import Any
 
 from app.core.errors import AppError
 from app.schemas.agent import AnalyzeRepoResponse, CoreFileSummary, GeneratedDocument
+from app.schemas.agent import AgentStep, ToolCallLog
 from app.schemas.analysis_job import (
     AnalysisArtifact,
     AnalysisEvent,
@@ -16,8 +17,8 @@ from app.services.analysis_job_repository import (
     AnalysisArtifactRepository,
     AnalysisEventRepository,
     AnalysisJobRepository,
-    InMemoryAnalysisJobRepository,
 )
+from app.services.llm_call_service import LLMCallRecord
 
 
 class AnalysisJobService:
@@ -136,12 +137,33 @@ class AnalysisJobService:
             result=AnalyzeRepoResponse.model_validate(by_type["result"]) if "result" in by_type else None,
         )
 
+    def persist_run_details(
+        self,
+        job_id: str,
+        *,
+        agent_steps: list[AgentStep],
+        tool_logs: list[ToolCallLog],
+        llm_call_records: list[LLMCallRecord],
+    ) -> None:
+        self.get_job(job_id)
+        persist = getattr(self._artifacts, "replace_run_details", None)
+        if persist is not None:
+            persist(
+                job_id=job_id,
+                agent_steps=agent_steps,
+                tool_logs=tool_logs,
+                llm_call_records=llm_call_records,
+            )
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-_repository = InMemoryAnalysisJobRepository()
+from app.db.repositories import create_default_analysis_job_repository
+
+
+_repository = create_default_analysis_job_repository()
 analysis_job_service = AnalysisJobService(
     job_repository=_repository,
     event_repository=_repository,

@@ -249,6 +249,42 @@ class MetricsServiceTests(unittest.TestCase):
         self.assertEqual(metrics.model, "m")
         self.assertEqual(metrics.prompt_template_count, 7)
 
+    def test_build_mock_analysis_metrics_sums_llm_token_usage(self) -> None:
+        records = [
+            LLMCallRecord(
+                provider="openai",
+                model="m",
+                prompt_type="项目概览",
+                duration_ms=10,
+                status="success",
+                input_tokens=12,
+                output_tokens=8,
+                total_tokens=20,
+            ),
+            LLMCallRecord(
+                provider="openai",
+                model="m",
+                prompt_type="技术栈",
+                duration_ms=5,
+                status="success",
+                input_tokens=3,
+                output_tokens=2,
+                total_tokens=5,
+            ),
+        ]
+
+        metrics = build_mock_analysis_metrics(
+            selection_metrics=CoreFileSelectionMetrics(candidate_core_files=0, raw_candidate_chars=0),
+            core_files=[],
+            documents=[],
+            analysis_duration_ms=100,
+            llm_call_records=records,
+        )
+
+        self.assertEqual(metrics.llm_input_tokens, 15)
+        self.assertEqual(metrics.llm_output_tokens, 10)
+        self.assertEqual(metrics.llm_total_tokens, 25)
+
     def test_build_mock_analysis_metrics_returns_zero_ratio_when_no_candidates(self) -> None:
         metrics = build_mock_analysis_metrics(
             selection_metrics=CoreFileSelectionMetrics(candidate_core_files=0, raw_candidate_chars=0),

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.schemas.agent import CoreFileSummary
-from app.schemas.metrics import CoreFileSelectionMetrics
+from app.schemas.metrics import CoreFileCandidateMetric, CoreFileSelectionMetrics
 
 IGNORED_NAMES = {
     ".git",
@@ -115,10 +115,11 @@ def select_core_files_with_metrics(
     )
 
     selected: list[CoreFileSummary] = []
+    candidate_summaries: list[CoreFileCandidateMetric] = []
     candidate_core_files = 0
     raw_candidate_chars = 0
 
-    for _, _, _, reason, path in ranked:
+    for score, _, _, reason, path in ranked:
         candidate = _read_core_file_candidate(path, root=root, reason=reason, max_bytes=max_bytes)
         if candidate is None:
             continue
@@ -126,6 +127,16 @@ def select_core_files_with_metrics(
         summary, full_content_chars = candidate
         candidate_core_files += 1
         raw_candidate_chars += full_content_chars
+        candidate_summaries.append(
+            CoreFileCandidateMetric(
+                path=summary.path,
+                file_type=summary.file_type,
+                size=summary.size,
+                reason=summary.reason,
+                score=score,
+                truncated=summary.truncated,
+            )
+        )
 
         if len(selected) >= max_files:
             continue
@@ -135,6 +146,7 @@ def select_core_files_with_metrics(
     return selected, CoreFileSelectionMetrics(
         candidate_core_files=candidate_core_files,
         raw_candidate_chars=raw_candidate_chars,
+        candidates=candidate_summaries,
     )
 
 

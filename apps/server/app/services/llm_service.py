@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - exercised only before dependencies are
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = 1800
-DEFAULT_PROVIDER = "openai"
+DEFAULT_PROVIDER = "deepseek"
 
 
 def has_llm_credentials(api_key: str | None) -> bool:
@@ -59,7 +59,7 @@ def generate_markdown_documents(
     for prompt in document_prompts:
         started = perf_counter()
         try:
-            content = _generate_single_document(
+            content, usage = _generate_single_document(
                 client=client,
                 prompt=prompt.instruction,
                 context=context,
@@ -80,6 +80,9 @@ def generate_markdown_documents(
                 prompt_type=prompt.title,
                 duration_ms=int((perf_counter() - started) * 1000),
                 status="success",
+                input_tokens=usage[0],
+                output_tokens=usage[1],
+                total_tokens=usage[2],
             )
         documents.append((prompt.title, prompt.filename, content))
     return documents
@@ -92,7 +95,7 @@ def _generate_single_document(
     context: str,
     model: str,
     api_key: str,
-) -> str:
+) -> tuple[str, tuple[int | None, int | None, int | None]]:
     try:
         response = client.chat.completions.create(
             model=model,
@@ -122,7 +125,25 @@ def _generate_single_document(
             message="AI 文档生成失败",
             detail="LLM 返回内容为空",
         )
-    return content
+    return content, _extract_token_usage(response)
+
+
+def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | None]:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None, None, None
+
+    input_tokens = _usage_value(usage, "prompt_tokens")
+    output_tokens = _usage_value(usage, "completion_tokens")
+    total_tokens = _usage_value(usage, "total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    return input_tokens, output_tokens, total_tokens
+
+
+def _usage_value(usage: Any, key: str) -> int | None:
+    value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+    return value if isinstance(value, int) else None
 
 
 def _extract_output_text(response: Any) -> str:

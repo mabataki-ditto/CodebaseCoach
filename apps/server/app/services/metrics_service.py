@@ -1,7 +1,16 @@
 import re
+from collections import Counter
 from pathlib import Path
 
-from app.schemas.agent import AgentStep, CoreFileSummary, GeneratedDocument, ToolCallLog
+from app.schemas.agent import (
+    AgentStep,
+    ContextDirectoryCoverage,
+    ContextQualityReport,
+    ContextSelectionReasonCount,
+    CoreFileSummary,
+    GeneratedDocument,
+    ToolCallLog,
+)
 from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoOperationMetrics, RepoScanMetrics
 from app.schemas.repo import FileTreeNode
 from app.services.llm_call_service import LLMCallRecord
@@ -22,6 +31,7 @@ _INTERVIEW_QUESTION_PATTERN = re.compile(r"^\s*#{2,3}\s+(?:Q\s*)?\d+\s*[：:.、
 _BACKTICK_TOKEN_PATTERN = re.compile(r"`([^`]+)`")
 _CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 _WORD_TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+")
+_MAX_OMITTED_CONTEXT_CANDIDATES = 5
 _INTERVIEW_DOC_FILENAME = "05-面试问题与回答.md"
 
 
@@ -44,6 +54,55 @@ def _count_referenced_file_paths(documents: list[GeneratedDocument]) -> int:
             if "/" in token or re.search(r"\.[A-Za-z][A-Za-z0-9]*$", token):
                 paths.add(token)
     return len(paths)
+
+
+def build_context_quality_report(
+    *,
+    selection_metrics: CoreFileSelectionMetrics,
+    core_files: list[CoreFileSummary],
+) -> ContextQualityReport:
+    selected_paths = {file.path for file in core_files}
+    omitted_candidates = [candidate for candidate in selection_metrics.candidates if candidate.path not in selected_paths]
+    context_char_count = sum(len(file.content_preview) for file in core_files)
+    raw_candidate_chars = selection_metrics.raw_candidate_chars
+    directory_counts = Counter(_top_level_directory(file.path) for file in core_files)
+    reason_counts = Counter(file.reason for file in core_files)
+    truncated_count = sum(1 for file in core_files if file.truncated)
+
+    notes: list[str] = []
+    if not core_files:
+        notes.append("No files were selected for LLM context.")
+    if omitted_candidates:
+        notes.append("Context file limit excluded additional candidate files.")
+    if truncated_count:
+        notes.append("Some selected files were truncated by the byte budget.")
+
+    return ContextQualityReport(
+        candidate_file_count=selection_metrics.candidate_core_files,
+        selected_file_count=len(core_files),
+        omitted_candidate_count=len(omitted_candidates),
+        context_char_count=context_char_count,
+        raw_candidate_chars=raw_candidate_chars,
+        compression_ratio=context_char_count / raw_candidate_chars if raw_candidate_chars else 0,
+        truncated_selected_file_count=truncated_count,
+        budget_limit_reached=bool(omitted_candidates),
+        selected_files=[file.path for file in core_files],
+        directory_coverage=[
+            ContextDirectoryCoverage(directory=directory, selected_file_count=count)
+            for directory, count in sorted(directory_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        selection_reasons=[
+            ContextSelectionReasonCount(reason=reason, selected_file_count=count)
+            for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        omitted_candidates=omitted_candidates[:_MAX_OMITTED_CONTEXT_CANDIDATES],
+        notes=notes,
+    )
+
+
+def _top_level_directory(path: str) -> str:
+    parts = path.split("/", 1)
+    return "." if len(parts) == 1 else parts[0]
 
 
 def build_mock_analysis_metrics(
@@ -70,6 +129,9 @@ def build_mock_analysis_metrics(
     llm_success_count = sum(1 for record in records if record.status == "success")
     llm_failed_count = sum(1 for record in records if record.status == "failed")
     llm_total_duration_ms = sum(record.duration_ms for record in records)
+    llm_input_tokens = sum(record.input_tokens or 0 for record in records)
+    llm_output_tokens = sum(record.output_tokens or 0 for record in records)
+    llm_total_tokens = sum(record.total_tokens or 0 for record in records)
 
     generated_doc_count = len(documents)
     generated_doc_total_chars = sum(len(document.content) for document in documents)
@@ -102,6 +164,9 @@ def build_mock_analysis_metrics(
         llm_success_count=llm_success_count,
         llm_failed_count=llm_failed_count,
         llm_total_duration_ms=llm_total_duration_ms,
+        llm_input_tokens=llm_input_tokens,
+        llm_output_tokens=llm_output_tokens,
+        llm_total_tokens=llm_total_tokens,
         generated_doc_count=generated_doc_count,
         generated_doc_total_chars=generated_doc_total_chars,
         generated_doc_total_words=generated_doc_total_words,

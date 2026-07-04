@@ -9,6 +9,9 @@ class LLMCallRecord:
     duration_ms: int
     status: str
     error_message: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class LLMCallService:
@@ -24,6 +27,9 @@ class LLMCallService:
         duration_ms: int,
         status: str,
         error_message: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        total_tokens: int | None = None,
     ) -> None:
         self._records.append(
             LLMCallRecord(
@@ -33,6 +39,9 @@ class LLMCallService:
                 duration_ms=duration_ms,
                 status=status,
                 error_message=error_message,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
             )
         )
 

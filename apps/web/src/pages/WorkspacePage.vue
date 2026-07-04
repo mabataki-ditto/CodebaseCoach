@@ -4,7 +4,7 @@
       <div class="workspace-title">
         <p class="eyebrow">AI Analysis</p>
         <h1>分析工作台</h1>
-        <p>输入 GitHub 仓库地址后，由 FastAPI 完成仓库读取、核心文件筛选和 Markdown 文档生成。</p>
+        <p>输入 GitHub 仓库地址后，由后端完成仓库读取、核心文件筛选和真实 LLM 文档生成。</p>
       </div>
 
       <n-space class="workspace-actions" align="center" :wrap="true">
@@ -62,61 +62,59 @@
 
     <section class="workspace-grid">
       <aside class="workspace-column left-column">
-          <n-card title="仓库文件树" class="workspace-card" :bordered="false">
-            <n-scrollbar class="panel-scroll tree-scroll">
-              <n-tree v-if="fileTreeData.length" :data="fileTreeData" block-line default-expand-all />
-              <n-empty v-else description="运行分析后显示后端返回的目录树" />
-            </n-scrollbar>
-          </n-card>
+        <n-card title="仓库文件树" class="workspace-card" :bordered="false">
+          <n-scrollbar class="panel-scroll tree-scroll">
+            <n-tree v-if="fileTreeData.length" :data="fileTreeData" block-line default-expand-all />
+            <n-empty v-else description="运行分析后显示后端返回的目录树" />
+          </n-scrollbar>
+        </n-card>
 
-          <n-card title="核心文件" class="workspace-card" :bordered="false">
-            <n-scrollbar class="panel-scroll core-file-scroll">
-              <div v-if="displayCoreFiles.length" class="core-file-list">
-                <article v-for="file in displayCoreFiles" :key="file.path" class="core-file-item">
-                  <div class="core-file-heading">
-                    <strong>{{ file.path }}</strong>
-                    <n-tag size="small">{{ file.file_type }}</n-tag>
-                  </div>
-                  <p>{{ file.reason }}</p>
-                  <n-space size="small">
-                    <n-tag size="small" :type="file.read_status === 'read' ? 'success' : 'default'">
-                      {{ file.read_status === 'read' ? '已读取' : file.read_status }}
-                    </n-tag>
-                    <n-tag v-if="file.used_for_context" size="small" type="info">用于 AI 上下文</n-tag>
-                    <n-tag v-if="file.truncated" size="small" type="warning">已截断</n-tag>
-                    <n-tag size="small">{{ formatBytes(file.size) }}</n-tag>
-                  </n-space>
-                </article>
-              </div>
-              <n-empty v-else description="运行分析后显示后端筛选结果" />
-            </n-scrollbar>
-          </n-card>
+        <n-card title="核心文件" class="workspace-card" :bordered="false">
+          <n-scrollbar class="panel-scroll core-file-scroll">
+            <div v-if="displayCoreFiles.length" class="core-file-list">
+              <article v-for="file in displayCoreFiles" :key="file.path" class="core-file-item">
+                <div class="core-file-heading">
+                  <strong>{{ file.path }}</strong>
+                  <n-tag size="small">{{ file.file_type }}</n-tag>
+                </div>
+                <p>{{ file.reason }}</p>
+                <n-space size="small">
+                  <n-tag size="small" :type="file.read_status === 'read' ? 'success' : 'default'">
+                    {{ file.read_status === 'read' ? '已读取' : file.read_status }}
+                  </n-tag>
+                  <n-tag v-if="file.used_for_context" size="small" type="info">用于 AI 上下文</n-tag>
+                  <n-tag v-if="file.truncated" size="small" type="warning">已截断</n-tag>
+                  <n-tag size="small">{{ formatBytes(file.size) }}</n-tag>
+                </n-space>
+              </article>
+            </div>
+            <n-empty v-else description="运行分析后显示后端筛选结果" />
+          </n-scrollbar>
+        </n-card>
       </aside>
 
       <aside class="workspace-column right-column">
-          <n-card title="Markdown 文档预览" class="workspace-card preview-card" :bordered="false">
-            <n-scrollbar class="panel-scroll preview-scroll">
-              <n-tabs v-if="displayDocuments.length" v-model:value="selectedDocPath" type="line" animated>
-                <n-tab-pane
-                  v-for="document in displayDocuments"
-                  :key="document.path"
-                  :name="document.path"
-                  :tab="document.title"
-                >
-                  <div class="doc-meta">
-                    <n-tag size="small" :type="currentMockMode ? 'warning' : 'success'">
-                      {{ currentMockMode ? 'mock' : '真实 AI' }}
-                    </n-tag>
-                    <span>{{ document.path }}</span>
-                  </div>
-                  <article class="markdown-preview rich-preview" v-html="renderMarkdown(document.content)" />
-                </n-tab-pane>
-              </n-tabs>
-              <n-alert v-else type="info" :show-icon="false">
-                运行分析后，这里会逐篇显示后端生成并保存到 generated_docs/ 的 Markdown 文档。
-              </n-alert>
-            </n-scrollbar>
-          </n-card>
+        <n-card title="Markdown 文档预览" class="workspace-card preview-card" :bordered="false">
+          <n-scrollbar class="panel-scroll preview-scroll">
+            <n-tabs v-if="displayDocuments.length" v-model:value="selectedDocPath" type="line" animated>
+              <n-tab-pane
+                v-for="document in displayDocuments"
+                :key="document.path"
+                :name="document.path"
+                :tab="document.title"
+              >
+                <div class="doc-meta">
+                  <n-tag size="small" :type="analysisModeTagType">{{ analysisModeLabel }}</n-tag>
+                  <span>{{ document.path }}</span>
+                </div>
+                <article class="markdown-preview rich-preview" v-html="renderMarkdown(document.content)" />
+              </n-tab-pane>
+            </n-tabs>
+            <n-alert v-else type="info" :show-icon="false">
+              运行分析后，这里会逐篇显示后端生成并保存到 generated_docs/ 的 Markdown 文档。
+            </n-alert>
+          </n-scrollbar>
+        </n-card>
       </aside>
     </section>
   </n-layout>
@@ -191,7 +189,7 @@ const streamStatusText = computed(() => appStore.workspaceStreamStatusText)
 const displayFileTree = computed(() => analysisResult.value?.file_tree ?? appStore.workspaceStreamFileTree)
 const displayCoreFiles = computed(() => analysisResult.value?.core_files ?? appStore.workspaceStreamCoreFiles)
 const displayDocuments = computed(() => analysisResult.value?.documents ?? appStore.workspaceStreamDocuments)
-const currentMockMode = computed(() => analysisResult.value?.mock_mode ?? appStore.workspaceStreamMockMode ?? true)
+const currentMockMode = computed(() => analysisResult.value?.mock_mode ?? appStore.workspaceStreamMockMode ?? false)
 
 const markdown = new MarkdownIt({
   html: false,
@@ -210,11 +208,10 @@ const repoMeta = computed(() => {
   const failed = Boolean(inputError.value)
 
   if (analysisResult.value) {
-    const mode = analysisResult.value.mock_mode ? 'Mock' : '真实 AI'
     return {
       owner: analysisResult.value.owner,
       repo: analysisResult.value.repo,
-      status: failed ? '分析失败' : `${mode} 分析完成`,
+      status: failed ? '分析失败' : '真实 AI 分析完成',
       statusType: (failed ? 'error' : 'success') as TagType,
     }
   }
@@ -241,13 +238,7 @@ const fileTreeData = computed<TreeOption[]>(() => {
   ]
 })
 
-const analysisModeLabel = computed(() => {
-  if (!analysisResult.value && appStore.workspaceStreamMockMode === null) {
-    return '自动模式'
-  }
-  return currentMockMode.value ? 'mock 回退' : '真实 AI'
-})
-
+const analysisModeLabel = computed(() => (currentMockMode.value ? 'mock' : '真实 AI'))
 const analysisModeTagType = computed<TagType>(() => (currentMockMode.value ? 'warning' : 'success'))
 
 async function runAnalysis() {

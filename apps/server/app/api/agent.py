@@ -6,8 +6,8 @@ from threading import Thread
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.agent.workflow import run_codebase_analysis_job, run_codebase_analysis_workflow, run_mock_codebase_analysis_workflow
-from app.schemas.agent import AnalyzeMockRequest, AnalyzeRepoRequest, AnalyzeRepoResponse
+from app.agent.workflow import require_llm_configuration, run_codebase_analysis_job, run_codebase_analysis_workflow
+from app.schemas.agent import AnalyzeRepoRequest, AnalyzeRepoResponse
 from app.schemas.analysis_job import AnalysisJobCancelResponse, AnalysisJobCreateResponse, AnalysisJobSnapshot
 from app.services.analysis_job_service import analysis_job_service
 
@@ -22,14 +22,9 @@ def analyze_repo(request: AnalyzeRepoRequest) -> AnalyzeRepoResponse:
     return run_codebase_analysis_workflow(request.repo_url)
 
 
-@router.post("/analyze/mock", response_model=AnalyzeRepoResponse)
-def analyze_repo_with_mock(request: AnalyzeMockRequest) -> AnalyzeRepoResponse:
-    logger.info("[analyze] received request | repo_url=%s | mode=mock", request.repo_url)
-    return run_mock_codebase_analysis_workflow(request.repo_url)
-
-
 @router.post("/analyze/jobs", response_model=AnalysisJobCreateResponse)
 def create_analysis_job(request: AnalyzeRepoRequest) -> AnalysisJobCreateResponse:
+    require_llm_configuration()
     job = analysis_job_service.create_job(request.repo_url)
     thread = Thread(
         target=run_codebase_analysis_job,
@@ -37,7 +32,6 @@ def create_analysis_job(request: AnalyzeRepoRequest) -> AnalysisJobCreateRespons
             "job_id": job.id,
             "repo_url": request.repo_url,
             "job_service": analysis_job_service,
-            "force_mock": False,
         },
         daemon=True,
     )

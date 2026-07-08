@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     max_core_file_bytes: int = 12_000
     max_file_tree_depth: int = 4
     max_file_tree_entries: int = 1_000
+    llm_max_workers: int = 4
     mcp_config_file: str | None = None
     mcp_readonly: bool = True
     github_personal_access_token: str | None = None

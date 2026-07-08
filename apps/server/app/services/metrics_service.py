@@ -154,8 +154,6 @@ def build_mock_analysis_metrics(
         raw_candidate_chars=raw_candidate_chars,
         final_context_chars=final_context_chars,
         context_compression_ratio=compression_ratio,
-        mock_doc_count=len(documents),
-        mock_doc_total_chars=sum(len(document.content) for document in documents),
         analysis_duration_ms=analysis_duration_ms,
         used_mock_ai=used_mock_ai,
         provider=provider,

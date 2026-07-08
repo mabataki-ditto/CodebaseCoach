@@ -583,8 +583,6 @@ def _record_analysis_metrics(
             raw_candidate_chars=metrics.raw_candidate_chars,
             final_context_chars=metrics.final_context_chars,
             context_compression_ratio=metrics.context_compression_ratio,
-            mock_doc_count=metrics.mock_doc_count,
-            mock_doc_total_chars=metrics.mock_doc_total_chars,
             analysis_duration_ms=metrics.analysis_duration_ms,
             used_mock_ai=metrics.used_mock_ai,
             provider=metrics.provider,

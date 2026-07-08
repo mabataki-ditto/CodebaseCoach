@@ -139,8 +139,6 @@ export interface MockAnalysisMetrics {
   raw_candidate_chars: number
   final_context_chars: number
   context_compression_ratio: number
-  mock_doc_count: number
-  mock_doc_total_chars: number
   analysis_duration_ms: number
   agent_step_count: number
   agent_success_step_count: number

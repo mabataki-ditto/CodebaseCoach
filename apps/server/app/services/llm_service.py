@@ -1,9 +1,10 @@
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
-from time import perf_counter
 from typing import Any
 
 from app.agent.prompts import DocumentPrompt, SYSTEM_PROMPT
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.services.llm_call_service import LLMCallService
 
@@ -55,36 +56,62 @@ def generate_markdown_documents(
     if base_url:
         client_kwargs["base_url"] = base_url.strip()
     client = OpenAI(**client_kwargs)
-    documents: list[tuple[str, str, str]] = []
-    for prompt in document_prompts:
-        started = perf_counter()
-        try:
-            content, usage = _generate_single_document(
+    prompts = list(document_prompts)
+
+    with ThreadPoolExecutor(max_workers=get_settings().llm_max_workers) as executor:
+        future_to_idx = {}
+        for idx, prompt in enumerate(prompts):
+            future = executor.submit(
+                _generate_single_document,
                 client=client,
                 prompt=prompt.instruction,
                 context=context,
                 model=model,
                 api_key=api_key,
             )
-        except AppError as exc:
-            if recorder is not None:
-                recorder.record(
-                    prompt_type=prompt.title,
-                    duration_ms=int((perf_counter() - started) * 1000),
-                    status="failed",
-                    error_message=exc.message,
-                )
-            raise
+            future_to_idx[future] = idx
+
+        results: list[dict | None] = [None] * len(prompts)
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            prompt = prompts[idx]
+            try:
+                content, usage, duration_ms = future.result()
+            except AppError as exc:
+                for f in future_to_idx:
+                    f.cancel()
+                if recorder is not None:
+                    recorder.record(
+                        prompt_type=prompt.title,
+                        duration_ms=0,
+                        status="failed",
+                        error_message=exc.message,
+                    )
+                raise
+            results[idx] = {
+                "title": prompt.title,
+                "filename": prompt.filename,
+                "content": content,
+                "usage": usage,
+                "duration_ms": duration_ms,
+            }
+
+    documents: list[tuple[str, str, str]] = []
+    for idx in range(len(prompts)):
+        r = results[idx]
+        if r is None:
+            continue
         if recorder is not None:
             recorder.record(
-                prompt_type=prompt.title,
-                duration_ms=int((perf_counter() - started) * 1000),
+                prompt_type=r["title"],
+                duration_ms=r["duration_ms"],
                 status="success",
-                input_tokens=usage[0],
-                output_tokens=usage[1],
-                total_tokens=usage[2],
+                input_tokens=r["usage"][0],
+                output_tokens=r["usage"][1],
+                total_tokens=r["usage"][2],
             )
-        documents.append((prompt.title, prompt.filename, content))
+        documents.append((r["title"], r["filename"], r["content"]))
+
     return documents
 
 
@@ -95,7 +122,9 @@ def _generate_single_document(
     context: str,
     model: str,
     api_key: str,
-) -> tuple[str, tuple[int | None, int | None, int | None]]:
+) -> tuple[str, tuple[int | None, int | None, int | None], float]:
+    import time
+    t0 = time.perf_counter()
     try:
         response = client.chat.completions.create(
             model=model,
@@ -117,6 +146,8 @@ def _generate_single_document(
             detail=_safe_error_detail(exc, api_key=api_key),
         ) from exc
 
+    duration_ms = int((time.perf_counter() - t0) * 1000)
+
     content = _extract_output_text(response).strip()
     if not content:
         raise AppError(
@@ -125,7 +156,7 @@ def _generate_single_document(
             message="AI 文档生成失败",
             detail="LLM 返回内容为空",
         )
-    return content, _extract_token_usage(response)
+    return content, _extract_token_usage(response), duration_ms
 
 
 def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | None]:

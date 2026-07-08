@@ -37,8 +37,6 @@ class MockAnalysisMetrics(CoreFileSelectionMetrics):
     truncated_files: int = Field(default=0, ge=0)
     final_context_chars: int = Field(default=0, ge=0)
     context_compression_ratio: float = Field(default=0, ge=0)
-    mock_doc_count: int = Field(default=0, ge=0)
-    mock_doc_total_chars: int = Field(default=0, ge=0)
     analysis_duration_ms: int = Field(default=0, ge=0)
     used_mock_ai: bool = True
     provider: str = ""
@@ -91,8 +89,6 @@ class RepoOperationMetrics(BaseModel):
     raw_candidate_chars: int = Field(default=0, ge=0)
     final_context_chars: int = Field(default=0, ge=0)
     context_compression_ratio: float = Field(default=0, ge=0)
-    mock_doc_count: int = Field(default=0, ge=0)
-    mock_doc_total_chars: int = Field(default=0, ge=0)
     analysis_duration_ms: int = Field(default=0, ge=0)
     used_mock_ai: bool = True
     provider: str = ""

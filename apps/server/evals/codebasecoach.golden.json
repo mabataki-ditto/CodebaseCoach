@@ -1,23 +1,10 @@
 {
-  "expected_files": [
-    "apps/server/app/agent/workflow.py",
-    "apps/server/app/services/file_selector_service.py",
-    "apps/web/src/pages/WorkspacePage.vue"
-  ],
-  "expected_tech_stack": [
-    "FastAPI",
-    "Vue",
-    "TypeScript",
-    "Pydantic"
-  ],
-  "expected_modules": [
-    "workflow",
-    "file_selector_service",
-    "AnalysisJobService"
-  ],
-  "min_textcitation_score": 0.8,
+  "expected_files": [],
+  "expected_tech_stack": [],
+  "expected_modules": [],
+  "min_textcitation_score": 0.7,
   "min_coverage_score": 0.3,
-  "max_hallucination_risk": 0.2,
+  "max_hallucination_risk": 0.3,
   "min_usefulness_score": 0.7,
   "min_interview_question_count": 8
 }

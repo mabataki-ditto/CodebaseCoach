@@ -6,6 +6,7 @@ from app.schemas.agent import (
     GeneratedDocumentEvaluation,
     GeneratedResultEvaluation,
 )
+from app.schemas.repo import BasicFileSummary
 
 
 INTERVIEW_QUESTION_TARGET = 8
@@ -33,8 +34,10 @@ def evaluate_generated_documents(
     *,
     documents: list[GeneratedDocument],
     core_files: list[CoreFileSummary],
+    basic_files: list[BasicFileSummary] | None = None,
 ) -> GeneratedResultEvaluation:
     context_paths = {file.path for file in core_files if file.used_for_context}
+    context_paths.update(file.path for file in basic_files or [])
     document_evaluations = [_evaluate_document(document, context_paths) for document in documents]
 
     valid_reference_count = sum(len(item.valid_referenced_file_paths) for item in document_evaluations)

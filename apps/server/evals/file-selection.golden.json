@@ -1,0 +1,338 @@
+{
+  "repositories": [
+    {
+      "repo_url": "https://github.com/pallets/flask",
+      "expected_entry_files": [
+        {
+          "path": "src/flask/__init__.py",
+          "reason": "Flask 包公共 API 的导出入口"
+        },
+        {
+          "path": "src/flask/cli.py",
+          "reason": "pyproject.toml 中 flask 命令指向的执行入口"
+        },
+        {
+          "path": "src/flask/__main__.py",
+          "reason": "python -m flask 的模块执行入口"
+        }
+      ],
+      "expected_core_files": [
+        {
+          "path": "src/flask/app.py",
+          "reason": "Flask 应用对象、请求分发与 WSGI 生命周期的核心实现"
+        },
+        {
+          "path": "src/flask/sansio/app.py",
+          "reason": "应用配置、路由注册等 Sans-IO 基础行为"
+        },
+        {
+          "path": "src/flask/ctx.py",
+          "reason": "应用上下文和请求上下文的生命周期管理"
+        },
+        {
+          "path": "src/flask/globals.py",
+          "reason": "current_app、request、session 等上下文代理"
+        },
+        {
+          "path": "src/flask/sansio/scaffold.py",
+          "reason": "应用与 Blueprint 共用的路由和处理器注册骨架"
+        },
+        {
+          "path": "src/flask/sansio/blueprints.py",
+          "reason": "Blueprint 定义、延迟注册与嵌套注册的核心逻辑"
+        },
+        {
+          "path": "src/flask/sessions.py",
+          "reason": "请求会话接口与安全 Cookie 会话实现"
+        }
+      ]
+    },
+    {
+      "repo_url": "https://github.com/vuejs/pinia",
+      "expected_entry_files": [
+        {
+          "path": "packages/pinia/src/index.ts",
+          "reason": "pinia 主包公共 API 的源码导出入口"
+        },
+        {
+          "path": "packages/testing/src/index.ts",
+          "reason": "@pinia/testing 子包的公共入口"
+        },
+        {
+          "path": "packages/nuxt/src/module.ts",
+          "reason": "@pinia/nuxt 子包导出的 Nuxt 模块入口"
+        }
+      ],
+      "expected_core_files": [
+        {
+          "path": "packages/pinia/src/createPinia.ts",
+          "reason": "Pinia 实例创建、插件注册及 Vue 安装逻辑"
+        },
+        {
+          "path": "packages/pinia/src/store.ts",
+          "reason": "defineStore 与 Store 创建、状态和 action 的核心实现"
+        },
+        {
+          "path": "packages/pinia/src/rootStore.ts",
+          "reason": "活动 Pinia 实例、根状态和插件接口定义"
+        },
+        {
+          "path": "packages/pinia/src/storeToRefs.ts",
+          "reason": "Store 状态和 getter 到响应式引用的转换逻辑"
+        },
+        {
+          "path": "packages/pinia/src/subscriptions.ts",
+          "reason": "Store 订阅注册与清理机制"
+        },
+        {
+          "path": "packages/pinia/src/hmr.ts",
+          "reason": "Store 热更新时的状态与行为替换逻辑"
+        },
+        {
+          "path": "packages/pinia/src/devtools/plugin.ts",
+          "reason": "Pinia Store 与 Vue Devtools 的核心集成"
+        },
+        {
+          "path": "packages/testing/src/testing.ts",
+          "reason": "@pinia/testing 创建测试 Pinia 与模拟 Store 的核心实现"
+        },
+        {
+          "path": "packages/nuxt/src/module.ts",
+          "reason": "@pinia/nuxt 的入口及 Nuxt 模块安装核心实现"
+        },
+        {
+          "path": "packages/nuxt/src/runtime/plugin.vue3.ts",
+          "reason": "Nuxt 运行时创建并注入 Pinia 实例的核心插件"
+        }
+      ]
+    },
+    {
+      "repo_url": "https://github.com/huggingface/smolagents",
+      "expected_entry_files": [
+        {
+          "path": "src/smolagents/__init__.py",
+          "reason": "smolagents 包公共 API 的导出入口"
+        },
+        {
+          "path": "src/smolagents/cli.py",
+          "reason": "pyproject.toml 中 smolagent 命令指向的执行入口"
+        },
+        {
+          "path": "src/smolagents/vision_web_browser.py",
+          "reason": "pyproject.toml 中 webagent 命令指向的执行入口"
+        }
+      ],
+      "expected_core_files": [
+        {
+          "path": "src/smolagents/agents.py",
+          "reason": "Agent 规划、执行、观察与多步运行循环的核心实现"
+        },
+        {
+          "path": "src/smolagents/models.py",
+          "reason": "模型调用、消息结构与流式响应抽象"
+        },
+        {
+          "path": "src/smolagents/tools.py",
+          "reason": "工具定义、校验、调用和工具集合管理"
+        },
+        {
+          "path": "src/smolagents/memory.py",
+          "reason": "Agent 步骤、工具调用和运行记忆的数据模型"
+        },
+        {
+          "path": "src/smolagents/local_python_executor.py",
+          "reason": "CodeAgent 本地 Python 执行环境的核心实现"
+        },
+        {
+          "path": "src/smolagents/default_tools.py",
+          "reason": "Agent 默认可用工具及工具映射"
+        },
+        {
+          "path": "src/smolagents/monitoring.py",
+          "reason": "Agent 日志、步骤监控和 Token 使用统计"
+        },
+        {
+          "path": "src/smolagents/vision_web_browser.py",
+          "reason": "webagent 命令入口及浏览 Agent 主流程实现"
+        },
+        {
+          "path": "src/smolagents/prompts/code_agent.yaml",
+          "reason": "CodeAgent 默认运行提示模板"
+        },
+        {
+          "path": "src/smolagents/prompts/toolcalling_agent.yaml",
+          "reason": "ToolCallingAgent 默认运行提示模板"
+        }
+      ]
+    },
+    {
+      "repo_url": "https://github.com/vuejs/router",
+      "expected_entry_files": [
+        {
+          "path": "packages/router/src/index.ts",
+          "reason": "tsdown 主构建和 vue-router 包公共 API 的源码入口"
+        },
+        {
+          "path": "packages/router/src/unplugin/index.ts",
+          "reason": "文件路由构建插件公共导出的主入口"
+        },
+        {
+          "path": "packages/router/src/experimental/index.ts",
+          "reason": "package exports 暴露的实验性路由 API 入口"
+        }
+      ],
+      "expected_core_files": [
+        {
+          "path": "packages/router/src/router.ts",
+          "reason": "Router 创建、导航调度和安装生命周期的核心实现"
+        },
+        {
+          "path": "packages/router/src/matcher/index.ts",
+          "reason": "路由记录注册、解析和匹配的核心实现"
+        },
+        {
+          "path": "packages/router/src/matcher/pathMatcher.ts",
+          "reason": "路由记录与路径解析器的匹配封装"
+        },
+        {
+          "path": "packages/router/src/matcher/pathParserRanker.ts",
+          "reason": "路径 token 编译、参数解析和路由优先级计算"
+        },
+        {
+          "path": "packages/router/src/history/common.ts",
+          "reason": "不同 History 实现共享的导航状态和监听基础"
+        },
+        {
+          "path": "packages/router/src/history/html5.ts",
+          "reason": "浏览器 HTML5 History 的核心实现"
+        },
+        {
+          "path": "packages/router/src/navigationGuards.ts",
+          "reason": "组件守卫提取、执行和异步控制流程"
+        },
+        {
+          "path": "packages/router/src/RouterLink.ts",
+          "reason": "RouterLink 组件及 useLink 导航状态逻辑"
+        },
+        {
+          "path": "packages/router/src/RouterView.ts",
+          "reason": "匹配路由组件渲染和嵌套视图管理"
+        }
+      ]
+    },
+    {
+      "repo_url": "https://github.com/encode/httpx",
+      "expected_entry_files": [
+        {
+          "path": "httpx/__init__.py",
+          "reason": "HTTPX 公共 API 导出及 pyproject.toml 中 httpx 命令指向的入口"
+        }
+      ],
+      "expected_core_files": [
+        {
+          "path": "httpx/_client.py",
+          "reason": "同步与异步客户端、请求发送和连接生命周期的核心实现"
+        },
+        {
+          "path": "httpx/_models.py",
+          "reason": "Request、Response、Headers 和 Cookies 等核心数据模型"
+        },
+        {
+          "path": "httpx/_api.py",
+          "reason": "get、post、request 和 stream 等顶层便捷 API"
+        },
+        {
+          "path": "httpx/_transports/base.py",
+          "reason": "同步与异步传输层接口及字节流抽象"
+        },
+        {
+          "path": "httpx/_transports/default.py",
+          "reason": "基于 httpcore 的默认 HTTP 同步与异步传输实现"
+        },
+        {
+          "path": "httpx/_content.py",
+          "reason": "请求内容编码和同步、异步内容流处理"
+        },
+        {
+          "path": "httpx/_auth.py",
+          "reason": "Basic、Digest、NetRC 等认证流程实现"
+        },
+        {
+          "path": "httpx/_urls.py",
+          "reason": "URL 与 QueryParams 的解析、规范化和操作"
+        },
+        {
+          "path": "httpx/_config.py",
+          "reason": "Timeout、Limits、Proxy 和 TLS 配置模型"
+        },
+        {
+          "path": "httpx/_decoders.py",
+          "reason": "响应压缩解码和文本流解码"
+        },
+        {
+          "path": "httpx/_main.py",
+          "reason": "HTTPX 命令行客户端的参数处理与请求执行"
+        }
+      ]
+    },
+    {
+      "repo_url": "https://github.com/pytest-dev/pytest",
+      "expected_entry_files": [
+        {
+          "path": "src/pytest/__init__.py",
+          "reason": "pytest 用户公共 API 的导出入口"
+        },
+        {
+          "path": "src/pytest/__main__.py",
+          "reason": "python -m pytest 的模块执行入口"
+        },
+        {
+          "path": "src/_pytest/config/__init__.py",
+          "reason": "pyproject.toml 中 pytest 与 py.test 命令指向的控制台入口"
+        }
+      ],
+      "expected_core_files": [
+        {
+          "path": "src/_pytest/config/__init__.py",
+          "reason": "命令入口、配置解析、插件管理和测试会话启动"
+        },
+        {
+          "path": "src/_pytest/main.py",
+          "reason": "Session、目录遍历和测试收集主流程"
+        },
+        {
+          "path": "src/_pytest/runner.py",
+          "reason": "测试协议、setup/call/teardown 和执行结果生成"
+        },
+        {
+          "path": "src/_pytest/python.py",
+          "reason": "Python 测试模块、类、函数和参数化收集"
+        },
+        {
+          "path": "src/_pytest/fixtures.py",
+          "reason": "fixture 注册、依赖解析、作用域和生命周期管理"
+        },
+        {
+          "path": "src/_pytest/nodes.py",
+          "reason": "Collector、Item 等测试收集树基础模型"
+        },
+        {
+          "path": "src/_pytest/hookspec.py",
+          "reason": "pytest 插件体系的核心 Hook 规范"
+        },
+        {
+          "path": "src/_pytest/assertion/rewrite.py",
+          "reason": "assert 语句导入改写和断言增强机制"
+        },
+        {
+          "path": "src/_pytest/reports.py",
+          "reason": "测试与收集结果报告模型"
+        },
+        {
+          "path": "src/_pytest/terminal.py",
+          "reason": "终端报告、进度和测试摘要输出"
+        }
+      ]
+    }
+  ]
+}

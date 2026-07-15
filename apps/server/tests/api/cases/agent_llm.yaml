@@ -1,0 +1,9 @@
+- id: analyze_small_public_repo
+  marks:
+    - external
+    - llm
+  request:
+    repo_url: octocat/Hello-World
+  expected:
+    status_code: 200
+    mock_mode: false

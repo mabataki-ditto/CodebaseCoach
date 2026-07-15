@@ -18,8 +18,10 @@ pytestmark = pytest.mark.api
 def test_history(history_client: HistoryClient, case: dict[str, Any]) -> None:
     if case["operation"] == "list":
         response = history_client.list_history()
-    else:
+    elif case["operation"] == "delete":
         response = history_client.delete_history(case["history_id"])
+    else:
+        raise AssertionError(f"不支持的历史记录操作: {case['operation']}")
 
     expected = case["expected"]
     assert response.status_code == expected["status_code"]

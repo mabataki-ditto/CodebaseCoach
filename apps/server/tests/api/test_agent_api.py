@@ -23,8 +23,10 @@ def test_missing_analysis_job(agent_client: AgentClient, case: dict[str, Any]) -
         response = agent_client.get_job(job_id)
     elif operation == "events":
         response = agent_client.get_events(job_id)
-    else:
+    elif operation == "cancel":
         response = agent_client.cancel_job(job_id)
+    else:
+        raise AssertionError(f"不支持的任务操作: {operation}")
 
     expected = case["expected"]
     assert response.status_code == expected["status_code"]

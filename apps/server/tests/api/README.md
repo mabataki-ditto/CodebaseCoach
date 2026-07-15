@@ -39,7 +39,13 @@ Copy-Item .env.api-test.example .env.api-test
 如需访问 GitHub，再显式执行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/api --run-api -m "api and external" --alluredir=tests/reports/allure-results
+.\.venv\Scripts\python.exe -m pytest tests/api --run-api -m "api and external and not llm" --alluredir=tests/reports/allure-results
+```
+
+真实大模型分析必须由服务端提供有效的 `LLM_*` 配置，并会访问 GitHub、产生模型费用。确认后再显式执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/api --run-api -m "api and llm" --alluredir=tests/reports/allure-results
 ```
 
 安装 Allure Commandline 后，可查看报告：
@@ -48,7 +54,7 @@ Copy-Item .env.api-test.example .env.api-test
 allure serve tests/reports/allure-results
 ```
 
-`allure-pytest` 负责生成原始结果，Allure Commandline 负责渲染和打开可视化报告。请求方法、路径、参数、响应状态和响应正文会进入日志或 Allure 附件；流式响应正文不会被请求封装提前消费。
+`allure-pytest` 负责生成原始结果，Allure Commandline 负责渲染和打开可视化报告。请求方法、路径、参数、响应状态和响应正文会进入 `tests/reports/api-tests.log` 或 Allure 附件；流式响应正文不会被请求封装提前消费。
 
 ## 新增用例
 

@@ -1,5 +1,4 @@
 import logging
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,6 @@ pytestmark = pytest.mark.unit
 class FakeResponse:
     status_code = 200
     text = '{"ok": true}'
-    elapsed = timedelta(milliseconds=12)
 
 
 class FakeSession:
@@ -140,12 +138,18 @@ def test_agent_client_maps_job_endpoints() -> None:
     client = AgentClient(api_client)
 
     client.create_job("owner/repo")
+    client.analyze_repo("owner/repo", timeout=300)
     client.get_job("job-1")
     client.get_events("job-1", after=3)
     client.cancel_job("job-1")
 
     assert api_client.calls == [
         ("POST", "/api/agent/analyze/jobs", {"json": {"repo_url": "owner/repo"}}),
+        (
+            "POST",
+            "/api/agent/analyze",
+            {"json": {"repo_url": "owner/repo"}, "timeout": 300},
+        ),
         ("GET", "/api/agent/analyze/jobs/job-1", {}),
         ("GET", "/api/agent/analyze/jobs/job-1/events", {"params": {"after": 3}, "stream": True}),
         ("POST", "/api/agent/analyze/jobs/job-1/cancel", {}),

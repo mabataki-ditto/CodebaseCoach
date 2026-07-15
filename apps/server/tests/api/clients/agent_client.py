@@ -10,6 +10,13 @@ class AgentClient:
     def create_job(self, repo_url: str) -> Any:
         return self._api_client.post("/api/agent/analyze/jobs", json={"repo_url": repo_url})
 
+    def analyze_repo(self, repo_url: str, *, timeout: float) -> Any:
+        return self._api_client.post(
+            "/api/agent/analyze",
+            json={"repo_url": repo_url},
+            timeout=timeout,
+        )
+
     def get_job(self, job_id: str) -> Any:
         return self._api_client.get(f"/api/agent/analyze/jobs/{job_id}")
 

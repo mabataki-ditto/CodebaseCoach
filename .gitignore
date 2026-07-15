@@ -36,3 +36,17 @@ Thumbs.db
 docs/
 .codex/
 .trae/
+
+# test coverage and reports
+.coverage
+coverage/
+*.htmlcov
+htmlcov/
+.pytest_cache/
+
+# evaluation reports
+apps/server/evals/*.json
+!apps/server/evals/*.golden.json
+
+# test reports
+apps/server/tests/reports/

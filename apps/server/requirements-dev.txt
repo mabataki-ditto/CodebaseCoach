@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest       # 执行测试
+pytest-cov   # 统计覆盖率
+pytest-html  # 生成 HTML 测试报告
+httpx        # 支持 FastAPI TestClient

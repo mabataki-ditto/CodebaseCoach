@@ -9,7 +9,7 @@ from app.agent.tools import assert_tool_allowed
 from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.agent import AgentStep, AnalyzeRepoResponse, CoreFileSummary, ToolCallLog
-from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoOperationMetrics, RepoScanMetrics
+from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoScanMetrics
 from app.schemas.repo import RepoParseResponse
 from app.services.agent_step_service import AgentStepRecorder
 from app.services.analysis_job_service import AnalysisJobService
@@ -19,7 +19,7 @@ from app.services.file_tree_service import build_file_tree, read_basic_files, sc
 from app.services.github_service import clone_repository
 from app.services.llm_call_service import LLMCallService
 from app.services.llm_service import DEFAULT_PROVIDER, generate_markdown_documents, has_llm_credentials
-from app.services.metrics_service import build_context_quality_report, build_mock_analysis_metrics, record_repo_operation_metrics
+from app.services.metrics_service import build_context_quality_report, build_mock_analysis_metrics
 from app.mcp.client import StdioMcpClient
 from app.mcp.config import get_enabled_server, load_mcp_config
 from app.services.repo_parser import parse_github_repo_url
@@ -231,12 +231,16 @@ def _run_codebase_analysis_workflow(*, repo_url: str) -> AnalyzeRepoResponse:
         title="Evaluate generated documents",
         description="Run deterministic output checks",
         tool_name="evaluate_generated_documents",
-        input_summary=f"documents={len(saved_documents)}, context_files={len(core_files)}",
+        input_summary=f"documents={len(saved_documents)}, context_files={len(basic_files) + len(core_files)}",
         input_payload={
             "document_count": len(saved_documents),
-            "context_file_count": len([file for file in core_files if file.used_for_context]),
+            "context_file_count": len(basic_files) + len([file for file in core_files if file.used_for_context]),
         },
-        action=lambda: evaluate_generated_documents(documents=saved_documents, core_files=core_files),
+        action=lambda: evaluate_generated_documents(
+            documents=saved_documents,
+            core_files=core_files,
+            basic_files=basic_files,
+        ),
         output_summary=lambda result: f"Quality scores: citations={result.textcitation_score}, coverage={result.coverage_score}",
         output_payload=lambda result: {
             "textcitation_score": result.textcitation_score,
@@ -245,7 +249,8 @@ def _run_codebase_analysis_workflow(*, repo_url: str) -> AnalyzeRepoResponse:
             "usefulness_score": result.usefulness_score,
             "issue_count": len(result.issues),
         },
-        related_files=lambda _: [file.path for file in core_files if file.used_for_context],
+        related_files=lambda _: [file.path for file in basic_files]
+        + [file.path for file in core_files if file.used_for_context],
         )
         analysis_duration_ms = int((perf_counter() - analysis_started) * 1000)
         metrics = build_mock_analysis_metrics(
@@ -261,13 +266,6 @@ def _run_codebase_analysis_workflow(*, repo_url: str) -> AnalyzeRepoResponse:
         agent_steps=steps,
         tool_logs=tool_logs,
         repo_scan_metrics=repo_scan_metrics,
-        )
-        _record_analysis_metrics(
-        repo_url=parsed_repo.repo_url,
-        owner=parsed_repo.owner,
-        repo=parsed_repo.repo,
-        started_at=analysis_started_at,
-        metrics=metrics,
         )
         _record_history(
             repo_url=parsed_repo.repo_url,
@@ -556,62 +554,6 @@ def _llm_base_url() -> str | None:
     return getattr(settings, "llm_base_url", None)
 
 
-def _record_analysis_metrics(
-    *,
-    repo_url: str,
-    owner: str,
-    repo: str,
-    started_at: datetime,
-    metrics: MockAnalysisMetrics,
-) -> None:
-    record_repo_operation_metrics(
-        RepoOperationMetrics(
-            operation="agent_analyze",
-            status="success",
-            repo_url=repo_url,
-            owner=owner,
-            repo=repo,
-            started_at=started_at,
-            ended_at=datetime.now(UTC),
-            duration_ms=metrics.analysis_duration_ms,
-            total_files=metrics.total_files,
-            ignored_dirs=metrics.ignored_dirs,
-            candidate_core_files=metrics.candidate_core_files,
-            selected_core_files=metrics.selected_core_files,
-            read_files=metrics.read_files,
-            truncated_files=metrics.truncated_files,
-            raw_candidate_chars=metrics.raw_candidate_chars,
-            final_context_chars=metrics.final_context_chars,
-            context_compression_ratio=metrics.context_compression_ratio,
-            analysis_duration_ms=metrics.analysis_duration_ms,
-            used_mock_ai=metrics.used_mock_ai,
-            provider=metrics.provider,
-            model=metrics.model,
-            llm_call_count=metrics.llm_call_count,
-            llm_success_count=metrics.llm_success_count,
-            llm_failed_count=metrics.llm_failed_count,
-            llm_total_duration_ms=metrics.llm_total_duration_ms,
-            generated_doc_count=metrics.generated_doc_count,
-            generated_doc_total_chars=metrics.generated_doc_total_chars,
-            generated_doc_total_words=metrics.generated_doc_total_words,
-            interview_question_count=metrics.interview_question_count,
-            referenced_file_path_count=metrics.referenced_file_path_count,
-            prompt_template_count=metrics.prompt_template_count,
-            agent_step_count=metrics.agent_step_count,
-            agent_success_step_count=metrics.agent_success_step_count,
-            agent_failed_step_count=metrics.agent_failed_step_count,
-            agent_skipped_step_count=metrics.agent_skipped_step_count,
-            tool_call_count=metrics.tool_call_count,
-            tool_success_count=metrics.tool_success_count,
-            tool_failed_count=metrics.tool_failed_count,
-            avg_tool_duration_ms=metrics.avg_tool_duration_ms,
-            max_tool_duration_ms=metrics.max_tool_duration_ms,
-            total_tool_duration_ms=metrics.total_tool_duration_ms,
-        ),
-        metrics_file=settings.metrics_path,
-    )
-
-
 def _record_history(
     *,
     repo_url: str,
@@ -884,12 +826,16 @@ def run_codebase_analysis_job(
             title="Evaluate generated documents",
             description="Run deterministic output checks",
             tool_name="evaluate_generated_documents",
-            input_summary=f"documents={len(saved_documents)}, context_files={len(core_files)}",
+            input_summary=f"documents={len(saved_documents)}, context_files={len(basic_files) + len(core_files)}",
             input_payload={
                 "document_count": len(saved_documents),
-                "context_file_count": len([file for file in core_files if file.used_for_context]),
+                "context_file_count": len(basic_files) + len([file for file in core_files if file.used_for_context]),
             },
-            action=lambda: evaluate_generated_documents(documents=saved_documents, core_files=core_files),
+            action=lambda: evaluate_generated_documents(
+                documents=saved_documents,
+                core_files=core_files,
+                basic_files=basic_files,
+            ),
             output_summary=lambda result: f"Quality scores: citations={result.textcitation_score}, coverage={result.coverage_score}",
             output_payload=lambda result: {
                 "textcitation_score": result.textcitation_score,
@@ -898,7 +844,8 @@ def run_codebase_analysis_job(
                 "usefulness_score": result.usefulness_score,
                 "issue_count": len(result.issues),
             },
-            related_files=lambda _: [file.path for file in core_files if file.used_for_context],
+            related_files=lambda _: [file.path for file in basic_files]
+            + [file.path for file in core_files if file.used_for_context],
         )
         analysis_duration_ms = int((perf_counter() - analysis_started) * 1000)
         metrics = build_mock_analysis_metrics(
@@ -914,13 +861,6 @@ def run_codebase_analysis_job(
             agent_steps=steps,
             tool_logs=tool_logs,
             repo_scan_metrics=repo_scan_metrics,
-        )
-        _record_analysis_metrics(
-            repo_url=parsed_repo.repo_url,
-            owner=parsed_repo.owner,
-            repo=parsed_repo.repo,
-            started_at=analysis_started_at,
-            metrics=metrics,
         )
         response = AnalyzeRepoResponse(
             owner=parsed_repo.owner,

@@ -2,10 +2,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from sqlalchemy.orm import sessionmaker
 
 from app.core.errors import AppError
-from app.db.session import create_engine_for_url, init_db
 from app.schemas.history import HistoryRecord
 from app.services.doc_storage_service import load_markdown_documents_for_history, save_markdown_documents
 from app.services.file_selector_service import select_core_files, select_core_files_with_metrics
@@ -132,10 +130,13 @@ def test_select_core_files_prioritizes_project_files_and_filters_noise() -> None
         files = select_core_files(root, max_files=12, max_bytes=10)
 
     paths = [file.path for file in files]
-    assert len(files) >= 5
+    assert len(files) == 4
     assert len(files) <= 12
-    assert paths[:3] == ["README.md", "package.json", "pyproject.toml"]
+    assert "README.md" not in paths
+    assert "package.json" not in paths
+    assert "pyproject.toml" not in paths
     assert "src/main.ts" in paths
+    assert "src/index.ts" in paths
     assert "app/main.py" in paths
     assert "test/main.test.ts" not in paths
     assert "dist/bundle.js" not in paths
@@ -145,7 +146,7 @@ def test_select_core_files_prioritizes_project_files_and_filters_noise() -> None
 def test_select_core_files_limits_content_preview() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "README.md").write_text("a" * 32, encoding="utf-8")
+        (root / "main.py").write_text("a" * 32, encoding="utf-8")
 
         files = select_core_files(root, max_files=12, max_bytes=8)
 
@@ -164,8 +165,8 @@ def test_select_core_files_with_metrics_counts_candidate_chars() -> None:
         files, metrics = select_core_files_with_metrics(root, max_files=1, max_bytes=8)
 
     assert len(files) == 1
-    assert metrics.candidate_core_files == 2
-    assert metrics.raw_candidate_chars == 30
+    assert metrics.candidate_core_files == 1
+    assert metrics.raw_candidate_chars == 20
 
 
 def test_save_markdown_documents_writes_files_under_generated_docs_root() -> None:
@@ -238,15 +239,8 @@ def test_load_markdown_documents_for_history_rejects_empty_docs_dir() -> None:
     assert ctx.value.code == "DOCS_NOT_FOUND"
 
 
-def _session_factory():
-    engine = create_engine_for_url("sqlite:///:memory:")
-    init_db(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-
-
-def test_add_and_list_history_records() -> None:
+def test_add_and_list_history_records(db_session_factory) -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        session_factory = _session_factory()
         history_file = Path(tmp) / "data" / "history.json"
 
         record = add_history_record(
@@ -259,9 +253,9 @@ def test_add_and_list_history_records() -> None:
             completed_at="2026-06-30T00:00:01Z",
             docs_dir="generated_docs/owner_demo_1",
             core_files_count=3,
-            session_factory=session_factory,
+            session_factory=db_session_factory,
         )
-        records = list_history_records(history_file=history_file, session_factory=session_factory)
+        records = list_history_records(history_file=history_file, session_factory=db_session_factory)
 
     assert len(records) == 1
     assert records[0].id == record.id
@@ -269,9 +263,8 @@ def test_add_and_list_history_records() -> None:
     assert not history_file.exists()
 
 
-def test_delete_history_record_does_not_delete_generated_docs() -> None:
+def test_delete_history_record_does_not_delete_generated_docs(db_session_factory) -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        session_factory = _session_factory()
         root = Path(tmp)
         history_file = root / "data" / "history.json"
         docs_dir = root / "generated_docs" / "owner_demo_1"
@@ -289,9 +282,13 @@ def test_delete_history_record_does_not_delete_generated_docs() -> None:
             completed_at="2026-06-30T00:00:01Z",
             docs_dir="generated_docs/owner_demo_1",
             core_files_count=1,
-            session_factory=session_factory,
+            session_factory=db_session_factory,
         )
-        deleted = delete_history_record(history_file=history_file, record_id=record.id, session_factory=session_factory)
+        deleted = delete_history_record(
+            history_file=history_file,
+            record_id=record.id,
+            session_factory=db_session_factory,
+        )
         doc_still_exists = doc_path.exists()
 
     assert deleted

@@ -1,6 +1,4 @@
-import json
 import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,82 +6,14 @@ import pytest
 
 from app.api import repo as repo_api
 from app.schemas.agent import CoreFileSummary, GeneratedDocument
-from app.schemas.metrics import CoreFileSelectionMetrics, RepoOperationMetrics
+from app.schemas.metrics import CoreFileSelectionMetrics
 from app.services.llm_call_service import LLMCallRecord
 from app.services.metrics_service import (
     build_mock_analysis_metrics,
-    count_file_tree_nodes,
-    record_repo_operation_metrics,
 )
 
 
 pytestmark = pytest.mark.unit
-
-
-def test_record_repo_operation_metrics_appends_jsonl(temp_dir: Path) -> None:
-    metrics_file = temp_dir / "data" / "metrics.jsonl"
-    record = RepoOperationMetrics(
-        operation="repo_parse",
-        status="success",
-        repo_url="https://github.com/owner/repo",
-        owner="owner",
-        repo="repo",
-        started_at=datetime(2026, 6, 30, 1, 0, tzinfo=UTC),
-        ended_at=datetime(2026, 6, 30, 1, 0, 0, 120000, tzinfo=UTC),
-        duration_ms=120,
-    )
-
-    record_repo_operation_metrics(record, metrics_file=metrics_file)
-
-    lines = metrics_file.read_text(encoding="utf-8").splitlines()
-
-    assert len(lines) == 1
-    payload = json.loads(lines[0])
-    assert payload["operation"] == "repo_parse"
-    assert payload["status"] == "success"
-    assert payload["owner"] == "owner"
-    assert payload["duration_ms"] == 120
-    assert "record_id" in payload
-
-
-def test_record_repo_operation_metrics_keeps_failure_context(temp_dir: Path) -> None:
-    metrics_file = temp_dir / "data" / "metrics.jsonl"
-    record = RepoOperationMetrics(
-        operation="repo_scan",
-        status="failed",
-        repo_url="https://github.com/bad/repo",
-        started_at=datetime(2026, 6, 30, 1, 0, tzinfo=UTC),
-        ended_at=datetime(2026, 6, 30, 1, 0, 1, tzinfo=UTC),
-        duration_ms=1000,
-        error_code="REPO_CLONE_FAILED",
-        error_message="仓库克隆失败",
-    )
-
-    record_repo_operation_metrics(record, metrics_file=metrics_file)
-
-    payload = json.loads(metrics_file.read_text(encoding="utf-8"))
-
-    assert payload["status"] == "failed"
-    assert payload["error_code"] == "REPO_CLONE_FAILED"
-    assert payload["error_message"] == "仓库克隆失败"
-
-
-def test_count_file_tree_nodes_counts_nested_nodes() -> None:
-    from app.schemas.repo import FileTreeNode
-    tree = [
-        FileTreeNode(
-            name="src",
-            path="src",
-            type="directory",
-            children=[
-                FileTreeNode(name="main.ts", path="src/main.ts", type="file"),
-                FileTreeNode(name="app.ts", path="src/app.ts", type="file"),
-            ],
-        ),
-        FileTreeNode(name="README.md", path="README.md", type="file"),
-    ]
-
-    assert count_file_tree_nodes(tree) == 4
 
 
 def test_build_mock_analysis_metrics_uses_real_character_counts() -> None:
@@ -302,26 +232,23 @@ def test_build_mock_analysis_metrics_returns_zero_ratio_when_no_candidates() -> 
     assert metrics.context_compression_ratio == 0
 
 
-def test_parse_repo_records_success_metrics() -> None:
+def test_parse_repo_does_not_create_metrics_file() -> None:
     from app.schemas.repo import RepoRequest
     with tempfile.TemporaryDirectory() as tmp:
         metrics_file = Path(tmp) / "metrics.jsonl"
         original_settings = repo_api.settings
-        repo_api.settings = SimpleNamespace(metrics_path=metrics_file)
+        repo_api.settings = SimpleNamespace()
         try:
             response = repo_api.parse_repo(RepoRequest(repo_url="https://github.com/owner/repo"))
         finally:
             repo_api.settings = original_settings
 
-        payload = json.loads(metrics_file.read_text(encoding="utf-8"))
+        assert not metrics_file.exists()
 
     assert response.owner == "owner"
-    assert payload["operation"] == "repo_parse"
-    assert payload["status"] == "success"
-    assert payload["repo_url"] == "https://github.com/owner/repo"
 
 
-def test_scan_repo_records_success_metrics_without_network() -> None:
+def test_scan_repo_does_not_create_metrics_file_without_network() -> None:
     from app.schemas.repo import RepoRequest
     from app.schemas.repo import BasicFileSummary, FileTreeNode
     with tempfile.TemporaryDirectory() as tmp:
@@ -350,7 +277,6 @@ def test_scan_repo_records_success_metrics_without_network() -> None:
         original_build_tree = repo_api.build_file_tree
         original_read_basic_files = repo_api.read_basic_files
         repo_api.settings = SimpleNamespace(
-            metrics_path=metrics_file,
             temp_repo_path=temp_root,
             max_file_tree_depth=4,
             max_file_tree_entries=100,
@@ -367,12 +293,6 @@ def test_scan_repo_records_success_metrics_without_network() -> None:
             repo_api.build_file_tree = original_build_tree
             repo_api.read_basic_files = original_read_basic_files
 
-        payload = json.loads(metrics_file.read_text(encoding="utf-8"))
+        assert not metrics_file.exists()
 
     assert response.owner == "owner"
-    assert payload["operation"] == "repo_scan"
-    assert payload["status"] == "success"
-    assert payload["cloned"]
-    assert payload["file_tree_node_count"] == 2
-    assert payload["basic_file_count"] == 1
-    assert payload["basic_file_bytes"] == 128

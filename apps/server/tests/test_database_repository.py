@@ -1,10 +1,8 @@
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
 
 from app.db.models import AgentStepRow, GeneratedDocumentRow, LlmCallRow, ToolCallRow
 from app.db.repositories import SqlAnalysisJobRepository
-from app.db.session import create_engine_for_url, init_db
 from app.schemas.agent import AgentStep, GeneratedDocument, ToolCallLog
 from app.services.analysis_job_service import AnalysisJobService
 from app.services.llm_call_service import LLMCallRecord
@@ -14,18 +12,15 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def db_service():
+def db_service(db_session_factory):
     """创建 SQL 持久化层的 AnalysisJobService。"""
-    engine = create_engine_for_url("sqlite:///:memory:")
-    init_db(engine)
-    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-    repository = SqlAnalysisJobRepository(session_factory)
+    repository = SqlAnalysisJobRepository(db_session_factory)
     service = AnalysisJobService(
         job_repository=repository,
         event_repository=repository,
         artifact_repository=repository,
     )
-    return service, session_factory
+    return service, db_session_factory
 
 
 def test_persists_jobs_events_and_artifacts_across_service_instances(db_service) -> None:

@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     openai_model: str = "deepseek-v4-flash"
     temp_repo_dir: str = "../../temp_repos"
     generated_docs_dir: str = "../../generated_docs"
-    metrics_file: str = "../../data/metrics.jsonl"
     history_file: str = "../../data/history.json"
     database_url: str = "sqlite:///../../data/codebasecoach.db"
     backend_cors_origins: str = "http://localhost:5173"
@@ -43,10 +42,6 @@ class Settings(BaseSettings):
     @property
     def generated_docs_path(self) -> Path:
         return self._resolve_from_server_dir(self.generated_docs_dir)
-
-    @property
-    def metrics_path(self) -> Path:
-        return self._resolve_from_server_dir(self.metrics_file)
 
     @property
     def history_path(self) -> Path:

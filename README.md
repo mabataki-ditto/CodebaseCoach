@@ -42,7 +42,7 @@ CodebaseCoach 的思路是先用确定性工程流程控制输入：只解析公
 | --- | --- |
 | 前端 | Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router、markdown-it、highlight.js |
 | 后端 | Python、FastAPI、Pydantic、Uvicorn、GitPython、OpenAI Python SDK |
-| 存储 | SQLite、SQLAlchemy、Alembic、Markdown 文件、JSONL metrics |
+| 存储 | SQLite、SQLAlchemy、Alembic、Markdown 文件 |
 | 通信 | HTTP、SSE |
 | 测试 | Python unittest、前端 TypeScript 构建检查 |
 
@@ -70,7 +70,7 @@ FastAPI Server
   |
   +--> temp_repos/       临时克隆仓库
   +--> generated_docs/   Markdown 文档正文
-  +--> data/             SQLite 数据库和 metrics.jsonl
+  +--> data/             SQLite 数据库
   +--> OpenAI-compatible LLM API
 ```
 
@@ -343,7 +343,6 @@ http://localhost:8000
 | `OPENAI_MODEL` | `deepseek-v4-flash` | 兼容旧配置 |
 | `TEMP_REPO_DIR` | `../../temp_repos` | 临时 clone 仓库目录 |
 | `GENERATED_DOCS_DIR` | `../../generated_docs` | Markdown 文档输出目录 |
-| `METRICS_FILE` | `../../data/metrics.jsonl` | 轻量指标 JSONL 文件 |
 | `DATABASE_URL` | `sqlite:///../../data/codebasecoach.db` | SQLite 数据库地址 |
 | `BACKEND_CORS_ORIGINS` | `http://localhost:5173` | 允许访问后端的前端地址 |
 | `MAX_BASIC_FILE_BYTES` | `20000` | 单个基础文件读取上限 |

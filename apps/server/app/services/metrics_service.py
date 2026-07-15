@@ -1,6 +1,5 @@
 import re
 from collections import Counter
-from pathlib import Path
 
 from app.schemas.agent import (
     AgentStep,
@@ -11,20 +10,8 @@ from app.schemas.agent import (
     GeneratedDocument,
     ToolCallLog,
 )
-from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoOperationMetrics, RepoScanMetrics
-from app.schemas.repo import FileTreeNode
+from app.schemas.metrics import CoreFileSelectionMetrics, MockAnalysisMetrics, RepoScanMetrics
 from app.services.llm_call_service import LLMCallRecord
-
-
-def record_repo_operation_metrics(record: RepoOperationMetrics, *, metrics_file: Path) -> None:
-    metrics_file.parent.mkdir(parents=True, exist_ok=True)
-    line = record.model_dump_json() + "\n"
-    with metrics_file.open("a", encoding="utf-8") as file:
-        file.write(line)
-
-
-def count_file_tree_nodes(nodes: list[FileTreeNode]) -> int:
-    return sum(1 + count_file_tree_nodes(node.children) for node in nodes)
 
 
 _INTERVIEW_QUESTION_PATTERN = re.compile(r"^\s*#{2,3}\s+(?:Q\s*)?\d+\s*[：:.、]", re.MULTILINE)

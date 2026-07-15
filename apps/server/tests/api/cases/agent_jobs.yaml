@@ -1,0 +1,20 @@
+- id: get_missing_job
+  operation: get
+  job_id: api-test-missing-job
+  expected:
+    status_code: 404
+    error_code: ANALYSIS_JOB_NOT_FOUND
+
+- id: stream_missing_job
+  operation: events
+  job_id: api-test-missing-job
+  expected:
+    status_code: 404
+    error_code: ANALYSIS_JOB_NOT_FOUND
+
+- id: cancel_missing_job
+  operation: cancel
+  job_id: api-test-missing-job
+  expected:
+    status_code: 404
+    error_code: ANALYSIS_JOB_NOT_FOUND

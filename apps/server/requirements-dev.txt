@@ -3,3 +3,6 @@ pytest       # 执行测试
 pytest-cov   # 统计覆盖率
 pytest-html  # 生成 HTML 测试报告
 httpx        # 支持 FastAPI TestClient
+requests     # 通过真实 HTTP 端口发送接口请求
+PyYAML       # 读取数据驱动测试用例
+allure-pytest # 生成 Allure 原始测试结果

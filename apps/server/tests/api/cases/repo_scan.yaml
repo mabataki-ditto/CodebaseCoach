@@ -1,0 +1,16 @@
+- id: invalid_repo_url
+  request:
+    repo_url: not-a-repository
+  expected:
+    status_code: 400
+    error_code: INVALID_GITHUB_URL
+
+- id: scan_small_public_repo
+  marks:
+    - external
+  request:
+    repo_url: octocat/Hello-World
+  expected:
+    status_code: 200
+    owner: octocat
+    repo: Hello-World

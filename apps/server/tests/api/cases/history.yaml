@@ -1,0 +1,11 @@
+- id: list_history
+  operation: list
+  expected:
+    status_code: 200
+
+- id: delete_missing_history
+  operation: delete
+  history_id: api-test-missing-history
+  expected:
+    status_code: 404
+    error_code: HISTORY_RECORD_NOT_FOUND

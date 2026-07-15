@@ -1,0 +1,32 @@
+- id: full_github_url
+  request:
+    repo_url: https://github.com/vuejs/core.git
+  expected:
+    status_code: 200
+    body:
+      owner: vuejs
+      repo: core
+      repo_url: https://github.com/vuejs/core
+
+- id: owner_repo_shorthand
+  request:
+    repo_url: fastapi/fastapi
+  expected:
+    status_code: 200
+    body:
+      owner: fastapi
+      repo: fastapi
+      repo_url: https://github.com/fastapi/fastapi
+
+- id: invalid_host
+  request:
+    repo_url: https://example.com/owner/repo
+  expected:
+    status_code: 400
+    error_code: INVALID_GITHUB_URL
+
+- id: empty_repo_url
+  request:
+    repo_url: ""
+  expected:
+    status_code: 422

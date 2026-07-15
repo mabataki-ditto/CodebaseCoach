@@ -1,0 +1,5 @@
+- id: get_docs_for_missing_history
+  history_id: api-test-missing-history
+  expected:
+    status_code: 404
+    error_code: HISTORY_RECORD_NOT_FOUND

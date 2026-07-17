@@ -25,19 +25,19 @@
       </n-card>
     </section>
 
-    <n-grid :cols="3" :x-gap="16" :y-gap="16" responsive="screen">
+    <n-grid class="home-info-grid" :cols="3" :x-gap="16" :y-gap="16" responsive="screen">
       <n-grid-item>
-        <n-card title="示例仓库" size="small">
+        <n-card class="home-info-card" title="示例仓库" size="small">
           <n-button text type="primary" @click="useExample">vuejs/core</n-button>
         </n-card>
       </n-grid-item>
       <n-grid-item>
-        <n-card title="最近分析" size="small">
+        <n-card class="home-info-card" title="最近分析" size="small">
           暂无历史记录，后续阶段接入本地记录。
         </n-card>
       </n-grid-item>
       <n-grid-item>
-        <n-card title="能力范围" size="small">
+        <n-card class="home-info-card" title="能力范围" size="small">
           当前阶段提供页面入口和工作台骨架，暂不执行真实仓库分析。
         </n-card>
       </n-grid-item>

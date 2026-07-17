@@ -93,6 +93,15 @@ h1 {
   line-height: 1.7;
 }
 
+.home-info-grid .n-grid-item {
+  display: flex;
+}
+
+.home-info-card {
+  width: 100%;
+  height: 100%;
+}
+
 .section-header {
   display: flex;
   align-items: flex-start;

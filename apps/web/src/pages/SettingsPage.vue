@@ -12,17 +12,25 @@
       <n-grid-item>
         <n-card title="后端连接">
           <n-descriptions :column="1" bordered>
-            <n-descriptions-item label="服务地址">http://localhost:8000</n-descriptions-item>
-            <n-descriptions-item label="健康状态">{{ healthStatus }}</n-descriptions-item>
+            <n-descriptions-item label="服务地址"
+              >http://localhost:8000</n-descriptions-item
+            >
+            <n-descriptions-item label="健康状态">{{
+              healthStatus
+            }}</n-descriptions-item>
           </n-descriptions>
         </n-card>
       </n-grid-item>
       <n-grid-item>
         <n-card title="模型配置">
           <n-descriptions :column="1" bordered>
-            <n-descriptions-item label="当前模型">gpt-4.1-mini</n-descriptions-item>
+            <n-descriptions-item label="当前模型"
+              >deepseek V4 flash</n-descriptions-item
+            >
             <n-descriptions-item label="LLM 模式">真实 LLM</n-descriptions-item>
-            <n-descriptions-item label="API Key">仅在后端 .env 配置</n-descriptions-item>
+            <n-descriptions-item label="API Key"
+              >仅在后端 .env 配置</n-descriptions-item
+            >
           </n-descriptions>
         </n-card>
       </n-grid-item>
@@ -49,19 +57,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useMessage } from 'naive-ui'
+import { ref } from "vue";
+import { useMessage } from "naive-ui";
 
-const message = useMessage()
-const healthStatus = ref('未检查')
+const message = useMessage();
+const healthStatus = ref("未检查");
 
 async function checkHealth() {
   try {
-    const response = await fetch('http://localhost:8000/health')
-    healthStatus.value = response.ok ? '正常' : '异常'
+    const response = await fetch("http://localhost:8000/health");
+    healthStatus.value = response.ok ? "正常" : "异常";
   } catch {
-    healthStatus.value = '无法连接'
-    message.warning('无法连接后端服务')
+    healthStatus.value = "无法连接";
+    message.warning("无法连接后端服务");
   }
 }
 </script>

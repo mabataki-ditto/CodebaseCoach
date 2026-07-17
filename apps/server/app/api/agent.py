@@ -6,14 +6,31 @@ from threading import Thread
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.agent.workflow import require_llm_configuration, run_codebase_analysis_job, run_codebase_analysis_workflow
+from app.agent.workflow import require_llm_configuration
 from app.schemas.agent import AnalyzeRepoRequest, AnalyzeRepoResponse
 from app.schemas.analysis_job import AnalysisJobCancelResponse, AnalysisJobCreateResponse, AnalysisJobSnapshot
-from app.services.analysis_job_service import analysis_job_service
+from app.services.analysis_job_service import AnalysisJobService, analysis_job_service
+from app.services.analysis_execution_service import analysis_execution_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
+
+
+def run_codebase_analysis_workflow(repo_url: str) -> AnalyzeRepoResponse:
+    """Compatibility seam retained for API tests and legacy callers."""
+    return analysis_execution_service.run_sync(repo_url)
+
+
+def run_codebase_analysis_job(
+    *, job_id: str, repo_url: str, job_service: AnalysisJobService
+) -> None:
+    """Compatibility seam retained while the execution service owns routing."""
+    analysis_execution_service.run_job(
+        job_id=job_id,
+        repo_url=repo_url,
+        job_service=job_service,
+    )
 
 
 @router.post("/analyze", response_model=AnalyzeRepoResponse)
@@ -55,6 +72,10 @@ async def stream_analysis_job_events(job_id: str, after: int = 0) -> StreamingRe
             events = analysis_job_service.get_events_after(job_id, sequence)
             for event in events:
                 sequence = event.sequence
+                if event.type in {"job_completed", "job_failed", "job_cancelled"}:
+                    current_status = analysis_job_service.get_job(job_id).status
+                    if not _terminal_event_matches_status(event.type, current_status):
+                        continue
                 yield _format_sse_event(event.type, event.sequence, event.model_dump())
                 if event.type in {"job_completed", "job_failed", "job_cancelled"}:
                     return
@@ -77,3 +98,11 @@ def cancel_analysis_job(job_id: str) -> AnalysisJobCancelResponse:
 def _format_sse_event(event_type: str, event_id: int, data: dict) -> str:
     payload = json.dumps(data, ensure_ascii=False, default=str)
     return f"id: {event_id}\nevent: {event_type}\ndata: {payload}\n\n"
+
+
+def _terminal_event_matches_status(event_type: str, status: str) -> bool:
+    return {
+        "job_completed": "success",
+        "job_failed": "failed",
+        "job_cancelled": "cancelled",
+    }.get(event_type) == status

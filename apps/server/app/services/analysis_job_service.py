@@ -94,6 +94,14 @@ class AnalysisJobService:
         job.updated_at = _now()
         return self._jobs.update_job(job)
 
+    def prepare_resume(self, job_id: str) -> AnalysisJob:
+        job = self.get_job(job_id)
+        job.status = "running"
+        job.updated_at = _now()
+        job.completed_at = None
+        job.error_message = None
+        return self._jobs.update_job(job)
+
     def is_cancel_requested(self, job_id: str) -> bool:
         return self.get_job(job_id).cancel_requested
 
@@ -121,6 +129,10 @@ class AnalysisJobService:
             created_at=_now(),
         )
         return self._artifacts.put_artifact(artifact)
+
+    def has_artifact(self, job_id: str, artifact_type: str) -> bool:
+        self.get_job(job_id)
+        return bool(self._artifacts.list_artifacts(job_id, artifact_type))
 
     def get_snapshot(self, job_id: str) -> AnalysisJobSnapshot:
         job = self.get_job(job_id)

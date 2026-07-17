@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,6 +9,7 @@ SERVER_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
+    analysis_engine: Literal["legacy", "langgraph"] = "legacy"
     llm_provider: str = "deepseek"
     llm_api_key: str | None = None
     llm_model: str = "deepseek-v4-flash"
@@ -18,6 +20,7 @@ class Settings(BaseSettings):
     generated_docs_dir: str = "../../generated_docs"
     history_file: str = "../../data/history.json"
     database_url: str = "sqlite:///../../data/codebasecoach.db"
+    graph_checkpoint_file: str = "../../data/langgraph_checkpoints.sqlite3"
     backend_cors_origins: str = "http://localhost:5173"
     max_basic_file_bytes: int = 20_000
     max_core_files: int = 12
@@ -46,6 +49,10 @@ class Settings(BaseSettings):
     @property
     def history_path(self) -> Path:
         return self._resolve_from_server_dir(self.history_file)
+
+    @property
+    def graph_checkpoint_path(self) -> Path:
+        return self._resolve_from_server_dir(self.graph_checkpoint_file)
 
     @property
     def resolved_database_url(self) -> str:

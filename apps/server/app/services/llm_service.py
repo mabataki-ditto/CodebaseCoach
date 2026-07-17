@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - exercised only before dependencies are
     OpenAI = None  # type: ignore[assignment]
 
 
-DEFAULT_MAX_OUTPUT_TOKENS = 1800
+DEFAULT_MAX_OUTPUT_TOKENS = 8192
 DEFAULT_PROVIDER = "deepseek"
 
 
@@ -38,24 +38,7 @@ def generate_markdown_documents(
     base_url: str | None = None,
     recorder: LLMCallService | None = None,
 ) -> list[tuple[str, str, str]]:
-    if not has_llm_credentials(api_key):
-        raise AppError(
-            status_code=400,
-            code="LLM_API_KEY_MISSING",
-            message="未配置 LLM API Key，无法调用真实 AI",
-        )
-    if OpenAI is None:
-        raise AppError(
-            status_code=500,
-            code="LLM_DEPENDENCY_MISSING",
-            message="OpenAI-compatible Python SDK 未安装",
-            detail="请先运行 pip install -r requirements.txt",
-        )
-
-    client_kwargs: dict[str, str] = {"api_key": api_key.strip()}
-    if base_url:
-        client_kwargs["base_url"] = base_url.strip()
-    client = OpenAI(**client_kwargs)
+    client, redaction_api_key = _create_openai_client(api_key=api_key, base_url=base_url)
     prompts = list(document_prompts)
 
     with ThreadPoolExecutor(max_workers=get_settings().llm_max_workers) as executor:
@@ -67,7 +50,7 @@ def generate_markdown_documents(
                 prompt=prompt.instruction,
                 context=context,
                 model=model,
-                api_key=api_key,
+                api_key=redaction_api_key,
             )
             future_to_idx[future] = idx
 
@@ -113,6 +96,70 @@ def generate_markdown_documents(
         documents.append((r["title"], r["filename"], r["content"]))
 
     return documents
+
+
+def generate_markdown_document(
+    *,
+    document_prompt: DocumentPrompt,
+    context: str,
+    api_key: str | None,
+    model: str,
+    base_url: str | None = None,
+    recorder: LLMCallService | None = None,
+) -> tuple[str, str, str]:
+    """Generate one document through the same OpenAI-compatible service path."""
+    client, redaction_api_key = _create_openai_client(api_key=api_key, base_url=base_url)
+    try:
+        content, usage, duration_ms = _generate_single_document(
+            client=client,
+            prompt=document_prompt.instruction,
+            context=context,
+            model=model,
+            api_key=redaction_api_key,
+        )
+    except AppError as exc:
+        if recorder is not None:
+            recorder.record(
+                prompt_type=document_prompt.title,
+                duration_ms=0,
+                status="failed",
+                error_message=exc.message,
+            )
+        raise
+
+    if recorder is not None:
+        recorder.record(
+            prompt_type=document_prompt.title,
+            duration_ms=duration_ms,
+            status="success",
+            input_tokens=usage[0],
+            output_tokens=usage[1],
+            total_tokens=usage[2],
+        )
+    return document_prompt.title, document_prompt.filename, content
+
+
+def _create_openai_client(*, api_key: str | None, base_url: str | None) -> tuple[Any, str]:
+    if not has_llm_credentials(api_key):
+        raise AppError(
+            status_code=400,
+            code="LLM_API_KEY_MISSING",
+            message="未配置 LLM API Key，无法调用真实 AI",
+        )
+    if OpenAI is None:
+        raise AppError(
+            status_code=500,
+            code="LLM_DEPENDENCY_MISSING",
+            message="OpenAI-compatible Python SDK 未安装",
+            detail="请先运行 pip install -r requirements.txt",
+        )
+
+    assert api_key is not None
+    normalized_api_key = api_key.strip()
+    client_kwargs: dict[str, str] = {"api_key": normalized_api_key}
+    if base_url:
+        client_kwargs["base_url"] = base_url.strip()
+    return OpenAI(**client_kwargs), api_key
 
 
 def _generate_single_document(

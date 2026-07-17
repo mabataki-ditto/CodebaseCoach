@@ -33,6 +33,8 @@ REAL_DOCUMENT_PROMPTS: tuple[DocumentPrompt, ...] = (
         filename="01-项目概览.md",
         instruction="""生成项目概览文档。
 
+目标篇幅：中文正文约 1200～1800 字；信息不足时宁可缩短，也不要重复或编造。
+
 建议结构：
 - 项目一句话定位
 - 可确认事实
@@ -46,6 +48,8 @@ REAL_DOCUMENT_PROMPTS: tuple[DocumentPrompt, ...] = (
         title="技术栈分析",
         filename="02-技术栈分析.md",
         instruction="""生成技术栈分析文档。
+
+目标篇幅：中文正文约 1200～1800 字；信息不足时宁可缩短，也不要重复或编造。
 
 建议结构：
 - 可确认技术栈
@@ -61,6 +65,8 @@ REAL_DOCUMENT_PROMPTS: tuple[DocumentPrompt, ...] = (
         filename="03-核心模块解析.md",
         instruction="""生成核心模块解析文档。
 
+目标篇幅：中文正文约 1800～2600 字；信息不足时宁可缩短，也不要重复或编造。
+
 建议结构：
 - 核心文件清单
 - 每个核心文件的职责
@@ -74,6 +80,8 @@ REAL_DOCUMENT_PROMPTS: tuple[DocumentPrompt, ...] = (
         title="核心流程说明",
         filename="04-核心流程说明.md",
         instruction="""生成核心流程说明文档。
+
+目标篇幅：中文正文约 1600～2400 字；信息不足时宁可缩短，也不要重复或编造。
 
 建议结构：
 - 从入口到关键功能的流程
@@ -89,6 +97,8 @@ REAL_DOCUMENT_PROMPTS: tuple[DocumentPrompt, ...] = (
         filename="05-面试问题与回答.md",
         instruction="""生成实习面试问题与回答。
 
+目标篇幅：中文正文约 2400～3400 字；信息不足时宁可缩短，也不要重复或编造。
+
 要求：
 - 至少 8 个问题，每个问题使用三级标题格式，例如 ### Q1. 项目解决了什么问题？，回答紧跟其后。
 - 每个回答都要尽量引用核心文件摘要中真实出现过的完整文件路径。
@@ -100,6 +110,8 @@ REAL_DOCUMENT_PROMPTS: tuple[DocumentPrompt, ...] = (
         title="简历描述",
         filename="06-简历描述.md",
         instruction="""生成简历描述文档。
+
+目标篇幅：中文正文约 800～1200 字；信息不足时宁可缩短，也不要重复或编造。
 
 建议结构：
 - 一句话项目描述
@@ -113,6 +125,8 @@ REAL_DOCUMENT_PROMPTS: tuple[DocumentPrompt, ...] = (
         title="可贡献PR方向",
         filename="07-可贡献PR方向.md",
         instruction="""生成可贡献 PR 方向文档。
+
+目标篇幅：中文正文约 1400～2200 字；信息不足时宁可缩短，也不要重复或编造。
 
 建议结构：
 - 适合新手的 PR 方向

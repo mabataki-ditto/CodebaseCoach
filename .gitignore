@@ -34,7 +34,7 @@ data/*
 .vscode/
 .DS_Store
 Thumbs.db
-docs/*
+docs/
 !docs/stage-notes/
 docs/stage-notes/*
 !docs/stage-notes/langgraph-phase-*.md

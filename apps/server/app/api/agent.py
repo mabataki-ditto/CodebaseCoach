@@ -8,7 +8,14 @@ from fastapi.responses import StreamingResponse
 
 from app.agent.workflow import require_llm_configuration
 from app.schemas.agent import AnalyzeRepoRequest, AnalyzeRepoResponse
-from app.schemas.analysis_job import AnalysisJobCancelResponse, AnalysisJobCreateResponse, AnalysisJobSnapshot
+from app.core.errors import AppError
+from app.schemas.analysis_job import (
+    AnalysisJobCancelResponse,
+    AnalysisJobCreateResponse,
+    AnalysisJobResumeResponse,
+    AnalysisJobResumeStatusResponse,
+    AnalysisJobSnapshot,
+)
 from app.services.analysis_job_service import AnalysisJobService, analysis_job_service
 from app.services.analysis_execution_service import analysis_execution_service
 
@@ -60,6 +67,52 @@ def create_analysis_job(request: AnalyzeRepoRequest) -> AnalysisJobCreateRespons
 @router.get("/analyze/jobs/{job_id}", response_model=AnalysisJobSnapshot)
 def get_analysis_job(job_id: str) -> AnalysisJobSnapshot:
     return analysis_job_service.get_snapshot(job_id)
+
+
+@router.get(
+    "/analyze/jobs/{job_id}/resume-status",
+    response_model=AnalysisJobResumeStatusResponse,
+)
+def get_analysis_job_resume_status(job_id: str) -> AnalysisJobResumeStatusResponse:
+    return analysis_execution_service.get_resume_status(job_id, analysis_job_service)
+
+
+@router.post(
+    "/analyze/jobs/{job_id}/resume",
+    response_model=AnalysisJobResumeResponse,
+)
+def resume_analysis_job(job_id: str) -> AnalysisJobResumeResponse:
+    response = analysis_execution_service.resume_job(job_id, analysis_job_service)
+    job = analysis_job_service.get_job(job_id)
+    thread = Thread(
+        target=run_codebase_analysis_job,
+        kwargs={
+            "job_id": job.id,
+            "repo_url": job.repo_url,
+            "job_service": analysis_job_service,
+        },
+        daemon=True,
+    )
+    try:
+        thread.start()
+    except Exception as error:
+        analysis_job_service.update_status(
+            job.id,
+            "failed",
+            error_message="恢复任务后台线程启动失败",
+        )
+        raise AppError(
+            status_code=500,
+            code="ANALYSIS_JOB_RESUME_START_FAILED",
+            message="恢复任务启动失败",
+            detail=str(error) or None,
+        ) from error
+    logger.info(
+        "[analyze-job] resume requested | job_id=%s | recovery_mode=%s",
+        job.id,
+        response.recovery_mode,
+    )
+    return response
 
 
 @router.get("/analyze/jobs/{job_id}/events")

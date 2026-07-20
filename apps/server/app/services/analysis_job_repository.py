@@ -18,6 +18,16 @@ class AnalysisJobRepository(ABC):
     def update_job(self, job: AnalysisJob) -> AnalysisJob:
         raise NotImplementedError
 
+    @abstractmethod
+    def try_transition_status(
+        self,
+        job_id: str,
+        *,
+        expected_statuses: set[str],
+        new_status: str,
+    ) -> AnalysisJob | None:
+        raise NotImplementedError
+
 
 class AnalysisEventRepository(ABC):
     @abstractmethod
@@ -66,6 +76,22 @@ class InMemoryAnalysisJobRepository(AnalysisJobRepository, AnalysisEventReposito
         with self._lock:
             self._jobs[job.id] = job.model_copy(deep=True)
             return job.model_copy(deep=True)
+
+    def try_transition_status(
+        self,
+        job_id: str,
+        *,
+        expected_statuses: set[str],
+        new_status: str,
+    ) -> AnalysisJob | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status not in expected_statuses:
+                return None
+            updated = job.model_copy(deep=True)
+            updated.status = new_status
+            self._jobs[job_id] = updated
+            return updated.model_copy(deep=True)
 
     def append_event(self, event: AnalysisEvent) -> AnalysisEvent:
         with self._lock:

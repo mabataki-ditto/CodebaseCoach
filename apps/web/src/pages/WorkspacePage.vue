@@ -333,7 +333,14 @@ function handleSseEvent(rawEvent: MessageEvent<string>) {
 
   if (event.type === 'job_started') {
     appStore.workspaceStreamMockMode = payload.mock_mode === true
-    appStore.workspaceStreamStatusText = '任务开始'
+    const recoveryMode = payload.recovery_mode
+    appStore.workspaceStreamStatusText = recoveryMode === 'rebuild_repository'
+      ? '临时仓库已被清理，正在重新克隆后继续任务'
+      : recoveryMode === 'full_restart'
+        ? '仓库版本发生变化，正在重新生成文档以保证一致性'
+        : payload.resumed === true
+          ? '正在从最近的运行存档继续任务'
+          : '任务开始'
     return
   }
 

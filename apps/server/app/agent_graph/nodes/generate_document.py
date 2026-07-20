@@ -28,6 +28,19 @@ def make_generate_document_node(
         model = runtime_context.get("llm_model") or ""
         retry_count = state.get("quality_retry_count", 0)
         retry_indices = state.get("quality_retry_indices", [])
+        existing_result = next(
+            (
+                result
+                for result in state.get("document_results", [])
+                if result.index == document_index
+            ),
+            None,
+        )
+        if existing_result is not None and not (
+            retry_count and document_index in retry_indices
+        ):
+            _emit_document_ready(result=existing_result, document_index=document_index)
+            return {}
         if retry_count and retry_indices and document_index not in retry_indices:
             return {}
         generation_context = state["analysis_context"]

@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import re
 
-from git import GitCommandError, Repo
+from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 
 from app.core.errors import AppError
 from app.schemas.repo import RepoParseResponse
@@ -32,6 +32,14 @@ def clone_repository(parsed_repo: RepoParseResponse, temp_repo_root: Path) -> Pa
         ) from exc
 
     return resolved_target
+
+
+def get_repository_commit_sha(local_path: Path) -> str:
+    """Return the checked-out commit without putting a Git object in graph state."""
+    try:
+        return Repo(local_path).head.commit.hexsha
+    except (InvalidGitRepositoryError, NoSuchPathError, ValueError):
+        return ""
 
 
 def _safe_path_part(value: str) -> str:

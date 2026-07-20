@@ -4,7 +4,7 @@ from app.agent_graph.context import AnalysisRuntimeContext, check_cancellation
 from app.agent_graph.state import AnalysisState
 from app.agent_graph.stage_adapter import GraphStageAdapter
 from app.core.config import settings
-from app.services.github_service import clone_repository
+from app.services.github_service import clone_repository, get_repository_commit_sha
 
 
 def clone_repo(
@@ -27,4 +27,8 @@ def clone_repo(
         output_payload=lambda result: {"local_path": str(result), "directory": result.name},
     )
     check_cancellation(runtime)
-    return {"local_path": str(local_path), **adapter.state_update()}
+    return {
+        "local_path": str(local_path),
+        "repository_commit_sha": get_repository_commit_sha(local_path),
+        **adapter.state_update(),
+    }

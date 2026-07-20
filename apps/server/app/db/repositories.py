@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import (
@@ -87,6 +87,29 @@ class SqlAnalysisJobRepository(AnalysisJobRepository, AnalysisEventRepository, A
             session.commit()
             session.refresh(row)
             return _job_from_row(row)
+
+    def try_transition_status(
+        self,
+        job_id: str,
+        *,
+        expected_statuses: set[str],
+        new_status: str,
+    ) -> AnalysisJob | None:
+        with self._session_factory() as session:
+            result = session.execute(
+                update(AnalysisJobRow)
+                .where(
+                    AnalysisJobRow.id == job_id,
+                    AnalysisJobRow.status.in_(expected_statuses),
+                )
+                .values(status=new_status)
+            )
+            if result.rowcount != 1:
+                session.rollback()
+                return None
+            session.commit()
+            row = session.get(AnalysisJobRow, job_id)
+            return _job_from_row(row) if row else None
 
     def append_event(self, event: AnalysisEvent) -> AnalysisEvent:
         with self._session_factory() as session:

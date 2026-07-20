@@ -204,3 +204,42 @@ export interface AnalysisEvent {
   created_at: string
   sequence: number
 }
+
+export type AnalysisRecoveryMode = 'checkpoint' | 'rebuild_repository' | 'full_restart'
+
+export interface AnalysisJob {
+  id: string
+  repo_url: string
+  owner: string
+  repo: string
+  status: AnalysisJobStatus
+  docs_dir: string
+  error_message?: string | null
+  mock_mode: boolean
+}
+
+export interface AnalysisJobSnapshot {
+  job: AnalysisJob
+  events: AnalysisEvent[]
+  file_tree: FileTreeNode[]
+  basic_files: BasicFileSummary[]
+  core_files: CoreFileSummary[]
+  documents: GeneratedDocument[]
+  result: AnalyzeRepoResponse | null
+}
+
+export interface AnalysisJobResumeStatusResponse {
+  job_id: string
+  can_resume: boolean
+  job_status: AnalysisJobStatus
+  engine: string | null
+  recovery_mode: AnalysisRecoveryMode | null
+  reason: string | null
+}
+
+export interface AnalysisJobResumeResponse {
+  job_id: string
+  status: AnalysisJobStatus
+  resumed: boolean
+  recovery_mode: AnalysisRecoveryMode
+}

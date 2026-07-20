@@ -2,6 +2,9 @@ import type {
   AgentStep,
   AnalysisJobCancelResponse,
   AnalysisJobCreateResponse,
+  AnalysisJobResumeResponse,
+  AnalysisJobResumeStatusResponse,
+  AnalysisJobSnapshot,
   AnalyzeRepoResponse,
   ToolCallLog,
 } from '../types/analysis'
@@ -95,6 +98,27 @@ export async function cancelAnalysisJob(baseUrl: string, jobId: string): Promise
   return (await response.json()) as AnalysisJobCancelResponse
 }
 
+export async function getAnalysisJob(baseUrl: string, jobId: string): Promise<AnalysisJobSnapshot> {
+  return getAnalysisJobResource<AnalysisJobSnapshot>(baseUrl, jobId, '')
+}
+
+export async function getAnalysisJobResumeStatus(
+  baseUrl: string,
+  jobId: string,
+): Promise<AnalysisJobResumeStatusResponse> {
+  return getAnalysisJobResource<AnalysisJobResumeStatusResponse>(baseUrl, jobId, '/resume-status')
+}
+
+export async function resumeAnalysisJob(baseUrl: string, jobId: string): Promise<AnalysisJobResumeResponse> {
+  const response = await fetch(`${normalizeBaseUrl(baseUrl)}/api/agent/analyze/jobs/${jobId}/resume`, {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    throw await toAnalysisRequestError(response)
+  }
+  return (await response.json()) as AnalysisJobResumeResponse
+}
+
 export function createAnalysisJobEventSource(baseUrl: string, jobId: string, after = 0): EventSource {
   return new EventSource(`${normalizeBaseUrl(baseUrl)}/api/agent/analyze/jobs/${jobId}/events?after=${after}`)
 }
@@ -131,6 +155,14 @@ async function toAnalysisRequestError(response: Response): Promise<AnalysisReque
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
+}
+
+async function getAnalysisJobResource<T>(baseUrl: string, jobId: string, suffix: string): Promise<T> {
+  const response = await fetch(`${normalizeBaseUrl(baseUrl)}/api/agent/analyze/jobs/${jobId}${suffix}`)
+  if (!response.ok) {
+    throw await toAnalysisRequestError(response)
+  }
+  return (await response.json()) as T
 }
 
 function isAbortError(error: unknown): boolean {

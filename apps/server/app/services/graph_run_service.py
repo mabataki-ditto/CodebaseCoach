@@ -65,6 +65,22 @@ class GraphRunService:
     def has_checkpoint(self, thread_id: str) -> bool:
         return self._checkpointer.get_tuple(self.thread_config(thread_id)) is not None
 
+    def get_checkpoint_state(self, thread_id: str) -> dict[str, Any]:
+        checkpoint_tuple = self._checkpointer.get_tuple(self.thread_config(thread_id))
+        if checkpoint_tuple is None:
+            return {}
+        values = checkpoint_tuple.checkpoint.get("channel_values", {})
+        state = dict(values) if isinstance(values, dict) else {}
+        pending_results = []
+        for _, channel, value in checkpoint_tuple.pending_writes or []:
+            if channel == "document_results" and isinstance(value, list):
+                pending_results.extend(value)
+        if pending_results:
+            existing = state.get("document_results", [])
+            by_index = {result.index: result for result in [*existing, *pending_results]}
+            state["document_results"] = [by_index[index] for index in sorted(by_index)]
+        return state
+
     def delete_thread(self, thread_id: str) -> None:
         self._checkpointer.delete_thread(thread_id)
 

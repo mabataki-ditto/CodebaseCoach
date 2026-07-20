@@ -21,6 +21,11 @@ CodebaseCoach 的思路是先用确定性工程流程控制输入：只解析公
 - 基础文件读取：读取 `README.md`、`package.json`、`requirements.txt`、`pyproject.toml` 等摘要。
 - 核心文件筛选：基于文件名、入口文件、核心目录和源码类型打分，默认最多选 12 个文件。
 - LLM 文档生成：通过 OpenAI 兼容接口生成 7 份 Markdown 文档。
+- LangGraph 编排：可选 StateGraph 引擎管理确定性仓库阶段、7 份文档并行生成和质量闭环。
+- 质量定向重试：确定性评估发现可归因问题时，只重新生成对应文档。
+- 失败恢复：独立 SQLite Checkpoint 保存图状态，失败任务可由用户主动继续；临时仓库丢失时会安全重建。
+- 可选 GitHub MCP 上下文：继续复用现有 MCP Client 和调用边界，不把 clone、扫描或筛选交给模型。
+- SSE 兼容适配：LangGraph 内部事件经适配层写入现有业务事件，前端事件名称保持不变。
 - Agent 过程展示：返回 `AgentStep` 和 `ToolCallLog`，记录阶段状态、工具输入输出、耗时和失败原因。
 - 异步任务与 SSE：支持创建后台分析任务、通过 SSE 接收阶段事件、逐篇文档生成事件和 metrics 更新。
 - 持久化：SQLite 保存分析任务、事件、产物索引、步骤、工具调用和 LLM 调用；Markdown 正文保存在 `generated_docs/`。
@@ -32,7 +37,9 @@ CodebaseCoach 的思路是先用确定性工程流程控制输入：只解析公
 - 当前主分析接口需要配置真实 `LLM_API_KEY` 或兼容供应商 Key；当前代码没有暴露 `/api/agent/analyze/mock`。
 - 响应中保留 `mock_mode` 字段，用于区分历史阶段或兼容数据来源；当前主流程返回 `mock_mode=false`。
 - 只支持公开 GitHub 仓库，不支持私有仓库授权、指定分支、上传 zip 或多用户登录。
-- 当前没有接入 LangChain、LangGraph、MCP、RAG 或向量数据库。
+- 当前已接入 LangGraph 和可选 GitHub MCP；没有引入顶层 LangChain、RAG 或向量数据库。
+- `ANALYSIS_ENGINE` 默认仍为 `legacy`，可显式切换为 `langgraph`；旧工作流暂时保留用于回滚。
+- LangGraph Checkpoint 只用于异步任务；同步分析请求不提供断点恢复。
 - 当前不会自动提交 PR，也不会修改目标仓库代码。
 - 生成结果评估是确定性检查，不是 LLM-as-judge。
 
@@ -41,8 +48,8 @@ CodebaseCoach 的思路是先用确定性工程流程控制输入：只解析公
 | 层 | 技术 |
 | --- | --- |
 | 前端 | Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router、markdown-it、highlight.js |
-| 后端 | Python、FastAPI、Pydantic、Uvicorn、GitPython、OpenAI Python SDK |
-| 存储 | SQLite、SQLAlchemy、Alembic、Markdown 文件 |
+| 后端 | Python、FastAPI、Pydantic、Uvicorn、GitPython、OpenAI Python SDK、LangGraph |
+| 存储 | SQLite、SQLAlchemy、Alembic、LangGraph SQLite Checkpoint、Markdown 文件 |
 | 通信 | HTTP、SSE |
 | 测试 | Python unittest、前端 TypeScript 构建检查 |
 
@@ -62,15 +69,15 @@ Vue 3 Web App
   |
   v
 FastAPI Server
-  - api/       请求入口
-  - schemas/   Pydantic 请求和响应模型
-  - services/  仓库读取、文件筛选、LLM、历史、指标、评估
-  - agent/     工作流编排、Prompt、ToolRegistry
-  - db/        SQLAlchemy 模型和 Repository
+  - api/          请求入口
+  - services/     业务能力与 AnalysisExecutionService
+  - agent/        legacy 工作流、Prompt、ToolRegistry
+  - agent_graph/  LangGraph State、节点、并行生成与质量循环
+  - db/           SQLAlchemy 模型和 Repository
   |
   +--> temp_repos/       临时克隆仓库
   +--> generated_docs/   Markdown 文档正文
-  +--> data/             SQLite 数据库
+  +--> data/             业务 SQLite + 独立 Checkpoint SQLite
   +--> OpenAI-compatible LLM API
 ```
 
@@ -78,12 +85,15 @@ FastAPI Server
 
 - API 层只负责接收请求、调用服务、返回响应。
 - Service 层承载仓库读取、文件树、文件筛选、文档存储、指标、评估等业务逻辑。
-- Agent 层负责编排分析流程、Prompt 和工具注册。
+- `AnalysisExecutionService` 按服务端配置选择 legacy 或 LangGraph，一次任务不会自动混用两个引擎。
+- Agent 层保留旧编排、Prompt 和工具注册；`agent_graph` 使用相同 Service 构建新图。
 - Repository 层隔离 SQLite 持久化，避免 API 和 workflow 直接依赖 SQLAlchemy 表结构。
+
+完整的状态、恢复、事件和持久化边界见 [LangGraph 工作流架构](docs/architecture/langgraph-workflow.md)。
 
 ## Agent 工作流
 
-同步分析和异步 job 分析都围绕同一条可控工作流展开：
+legacy 与 LangGraph 都遵循同一业务阶段；LangGraph 将七份文档放在可独立恢复的并行节点中：
 
 ```text
 1. 校验 LLM 配置
@@ -94,10 +104,10 @@ FastAPI Server
 6. 筛选核心文件并读取有限内容
 7. 生成上下文质量报告
 8. 构建 LLM 分析上下文
-9. 调用 LLM 生成 7 份 Markdown 文档
-10. 保存 Markdown 到 generated_docs/
-11. 对生成结果做确定性评估
-12. 汇总 metrics、保存历史和运行明细
+9. 并行调用 LLM 生成 7 份 Markdown 文档
+10. 对生成结果做确定性评估，并定向重试问题文档
+11. 保存 Markdown 到 generated_docs/
+12. 汇总 metrics、保存历史和运行明细；成功后清理 Checkpoint
 ```
 
 每个阶段通过 `AgentStep` 记录状态和耗时，通过 `ToolCallLog` 记录工具名称、权限、输入摘要、输出摘要、相关文件、耗时和错误。失败时，后端会把已执行步骤和工具日志放入结构化错误响应，前端可以展示失败发生在哪一步。
@@ -106,17 +116,21 @@ FastAPI Server
 
 ```mermaid
 flowchart TD
-  A["用户输入 GitHub URL"] --> B["解析并校验 URL"]
-  B --> C["GitPython 浅克隆仓库"]
-  C --> D["生成过滤后的文件树"]
-  D --> E["读取 README / package 等基础文件"]
-  E --> F["规则打分筛选核心文件"]
-  F --> G["构建上下文质量报告"]
-  G --> H["拼接 LLM 分析上下文"]
-  H --> I["按 7 个 Prompt 生成 Markdown"]
-  I --> J["保存文档到 generated_docs"]
-  J --> K["确定性评估生成结果"]
-  K --> L["写入 SQLite / metrics / 前端展示"]
+  A["Vue 3 前端"] -->|"HTTP / SSE"| B["FastAPI"]
+  B --> C["AnalysisExecutionService"]
+  C -->|"legacy"| D["Legacy Workflow"]
+  C -->|"langgraph"| E["LangGraph StateGraph"]
+  E --> F["解析、克隆、扫描、筛选"]
+  F --> G["上下文与可选 GitHub MCP"]
+  G --> H["7 文档并行生成"]
+  H --> I["确定性质量评估"]
+  I -->|"问题可归因"| J["定向重试"]
+  J --> I
+  I -->|"通过或达到上限"| K["业务持久化"]
+  E --> L["独立 SQLite Checkpoint"]
+  E --> M["LangGraph Event Adapter"]
+  M --> N["现有 SSE 事件"]
+  K --> O["业务 SQLite / generated_docs"]
 ```
 
 ## 生成文档
@@ -208,6 +222,8 @@ POST /api/agent/analyze/jobs
 GET  /api/agent/analyze/jobs/{job_id}
 GET  /api/agent/analyze/jobs/{job_id}/events
 POST /api/agent/analyze/jobs/{job_id}/cancel
+GET  /api/agent/analyze/jobs/{job_id}/resume-status
+POST /api/agent/analyze/jobs/{job_id}/resume
 ```
 
 异步任务使用后台线程执行分析。`/events` 是 SSE 接口，会推送：
@@ -221,6 +237,8 @@ POST /api/agent/analyze/jobs/{job_id}/cancel
 - `job_completed`
 - `job_failed`
 - `job_cancelled`
+
+恢复接口只接受服务端已有的 `job_id`，不接受 `repo_url`、`thread_id` 或 Graph State。只有 failed、原引擎为 LangGraph、Checkpoint 仍存在且当前服务启用了 LangGraph 的任务可以继续。前端会沿用原任务和最后 SSE sequence，不创建新的历史记录。
 
 ### 历史记录
 
@@ -282,9 +300,12 @@ LLM_PROVIDER=deepseek
 LLM_API_KEY=your_deepseek_api_key
 LLM_MODEL=deepseek-v4-flash
 LLM_BASE_URL=https://api.deepseek.com
+ANALYSIS_ENGINE=legacy
+GRAPH_CHECKPOINT_FILE=../../data/langgraph_checkpoints.sqlite3
 ```
 
 兼容字段 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 仍保留，但当前配置读取优先使用 `LLM_*`。
+将 `ANALYSIS_ENGINE` 改为 `langgraph` 后必须重启后端。LangGraph 继续通过现有 OpenAI Python SDK 调用 DeepSeek/OpenAI-compatible API，它不替换模型 SDK。
 
 ### 3. 启动后端
 
@@ -341,6 +362,8 @@ http://localhost:8000
 | `LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容接口 base URL |
 | `OPENAI_API_KEY` | 空 | 兼容旧配置，优先级低于 `LLM_API_KEY` |
 | `OPENAI_MODEL` | `deepseek-v4-flash` | 兼容旧配置 |
+| `ANALYSIS_ENGINE` | `legacy` | 正式分析执行引擎：`legacy` 或 `langgraph` |
+| `GRAPH_CHECKPOINT_FILE` | `../../data/langgraph_checkpoints.sqlite3` | LangGraph 运行状态库，与业务数据库分离 |
 | `TEMP_REPO_DIR` | `../../temp_repos` | 临时 clone 仓库目录 |
 | `GENERATED_DOCS_DIR` | `../../generated_docs` | Markdown 文档输出目录 |
 | `DATABASE_URL` | `sqlite:///../../data/codebasecoach.db` | SQLite 数据库地址 |

@@ -41,6 +41,16 @@
           </div>
           <n-space class="history-actions" :wrap="true">
             <n-button size="small" :disabled="!record.docs_dir" @click="openDocs(record.id)">打开文档</n-button>
+            <n-button
+              v-if="resumeStatuses[record.id]?.can_resume"
+              size="small"
+              type="primary"
+              :loading="resumingId === record.id"
+              :disabled="resumingId !== null"
+              @click="resume(record)"
+            >
+              继续任务
+            </n-button>
             <n-button size="small" secondary :loading="reanalyzingId === record.id" @click="reanalyze(record)">
               重新分析
             </n-button>
@@ -66,10 +76,16 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { analyzeRepo } from '../api/analysis'
+import {
+  analyzeRepo,
+  getAnalysisJob,
+  getAnalysisJobResumeStatus,
+  resumeAnalysisJob,
+} from '../api/analysis'
 import { deleteHistoryRecord, fetchHistoryRecords } from '../api/history'
 import { useAppStore } from '../stores/app'
 import type { HistoryRecord } from '../types/history'
+import type { AnalysisJobResumeStatusResponse } from '../types/analysis'
 
 const router = useRouter()
 const message = useMessage()
@@ -79,6 +95,8 @@ const isLoading = ref(false)
 const errorMessage = ref('')
 const deletingId = ref<string | null>(null)
 const reanalyzingId = ref<string | null>(null)
+const resumingId = ref<string | null>(null)
+const resumeStatuses = ref<Record<string, AnalysisJobResumeStatusResponse>>({})
 
 onMounted(loadHistory)
 
@@ -87,10 +105,42 @@ async function loadHistory() {
   errorMessage.value = ''
   try {
     records.value = await fetchHistoryRecords(appStore.backendBaseUrl)
+    const failedRecords = records.value.filter((record) => record.status === 'failed')
+    const statuses = await Promise.all(
+      failedRecords.map(async (record) => {
+        try {
+          return [record.id, await getAnalysisJobResumeStatus(appStore.backendBaseUrl, record.id)] as const
+        } catch {
+          return null
+        }
+      }),
+    )
+    resumeStatuses.value = Object.fromEntries(statuses.filter((item) => item !== null))
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '历史记录读取失败'
   } finally {
     isLoading.value = false
+  }
+}
+
+async function resume(record: HistoryRecord) {
+  if (resumingId.value !== null) return
+  resumingId.value = record.id
+  try {
+    const snapshot = await getAnalysisJob(appStore.backendBaseUrl, record.id)
+    const resumed = await resumeAnalysisJob(appStore.backendBaseUrl, record.id)
+    appStore.prepareWorkspaceResume(snapshot, resumed.recovery_mode)
+    if (resumed.recovery_mode === 'rebuild_repository') {
+      message.info('临时仓库已被清理，系统将重新克隆仓库后继续任务。')
+    } else if (resumed.recovery_mode === 'full_restart') {
+      message.info('仓库版本发生变化，本次将重新执行文档生成以保证结果一致。')
+    }
+    await router.push({ name: 'workspace' })
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '继续任务失败')
+    await loadHistory()
+  } finally {
+    resumingId.value = null
   }
 }
 

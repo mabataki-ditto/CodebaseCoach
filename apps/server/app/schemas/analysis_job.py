@@ -9,6 +9,7 @@ from app.schemas.repo import BasicFileSummary, FileTreeNode
 
 
 AnalysisJobStatus = Literal["queued", "running", "success", "failed", "cancelled"]
+AnalysisRecoveryMode = Literal["checkpoint", "rebuild_repository", "full_restart"]
 AnalysisEventType = Literal[
     "job_started",
     "stage_started",
@@ -74,3 +75,19 @@ class AnalysisJobSnapshot(BaseModel):
 class AnalysisJobCancelResponse(BaseModel):
     job_id: str
     status: AnalysisJobStatus
+
+
+class AnalysisJobResumeStatusResponse(BaseModel):
+    job_id: str
+    can_resume: bool
+    job_status: AnalysisJobStatus
+    engine: str | None = None
+    recovery_mode: AnalysisRecoveryMode | None = None
+    reason: str | None = None
+
+
+class AnalysisJobResumeResponse(BaseModel):
+    job_id: str
+    status: AnalysisJobStatus
+    resumed: bool
+    recovery_mode: AnalysisRecoveryMode

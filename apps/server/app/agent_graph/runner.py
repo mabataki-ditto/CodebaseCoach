@@ -30,6 +30,7 @@ def run_analysis_graph(
     on_state_update: Callable[[AnalysisState], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
     selective_quality_retry: bool = False,
+    recovery_initial_state: AnalysisState | None = None,
 ) -> AnalysisState:
     """Synchronously run or explicitly resume the opt-in analysis graph."""
     graph_thread_id = thread_id or job_id
@@ -46,7 +47,12 @@ def run_analysis_graph(
             message="LangGraph recovery requires a graph run service",
         )
 
-    initial_state: AnalysisState = {"repo_url": repo_url, "agent_steps": [], "tool_logs": []}
+    initial_state: AnalysisState = {
+        **(recovery_initial_state or {}),
+        "repo_url": repo_url,
+        "agent_steps": (recovery_initial_state or {}).get("agent_steps", []),
+        "tool_logs": (recovery_initial_state or {}).get("tool_logs", []),
+    }
     if job_id is not None:
         initial_state["job_id"] = job_id
     if include_quality_loop:

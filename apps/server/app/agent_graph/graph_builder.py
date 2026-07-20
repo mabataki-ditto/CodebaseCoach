@@ -18,6 +18,7 @@ from app.agent_graph.nodes.evaluate_documents import (
     route_after_quality,
 )
 from app.agent_graph.nodes.parse_repo import parse_repo
+from app.agent_graph.nodes.prepare_repository_recovery import prepare_repository_recovery
 from app.agent_graph.nodes.scan_repo import scan_repo
 from app.agent_graph.nodes.select_core_files import select_core_files
 from app.agent_graph.state import AnalysisState
@@ -44,6 +45,7 @@ def build_analysis_graph(
         graph = StateGraph(AnalysisState, context_schema=AnalysisRuntimeContext)
     graph.add_node("parse_repo", parse_repo)
     graph.add_node("clone_repo", clone_repo)
+    graph.add_node("prepare_repository_recovery", prepare_repository_recovery)
     graph.add_node("scan_repo", scan_repo)
     graph.add_node("select_core_files", select_core_files)
     graph.add_node("build_context_quality_report", build_context_quality_report)
@@ -51,7 +53,8 @@ def build_analysis_graph(
     graph.add_node("fetch_github_mcp_context", fetch_github_mcp_context)
     graph.add_edge(START, "parse_repo")
     graph.add_edge("parse_repo", "clone_repo")
-    graph.add_edge("clone_repo", "scan_repo")
+    graph.add_edge("clone_repo", "prepare_repository_recovery")
+    graph.add_edge("prepare_repository_recovery", "scan_repo")
     graph.add_edge("scan_repo", "select_core_files")
     graph.add_edge("select_core_files", "build_context_quality_report")
     graph.add_edge("build_context_quality_report", "build_analysis_context")

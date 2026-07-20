@@ -102,6 +102,26 @@ class AnalysisJobService:
         job.error_message = None
         return self._jobs.update_job(job)
 
+    def try_prepare_resume(self, job_id: str) -> AnalysisJob:
+        job = self._jobs.try_transition_status(
+            job_id,
+            expected_statuses={"failed"},
+            new_status="running",
+        )
+        if job is None:
+            current = self.get_job(job_id)
+            raise AppError(
+                status_code=409,
+                code="ANALYSIS_JOB_NOT_RESUMABLE",
+                message="当前任务状态不允许恢复",
+                detail=f"status={current.status}",
+            )
+        job.updated_at = _now()
+        job.completed_at = None
+        job.error_message = None
+        job.cancel_requested = False
+        return self._jobs.update_job(job)
+
     def is_cancel_requested(self, job_id: str) -> bool:
         return self.get_job(job_id).cancel_requested
 
@@ -133,6 +153,11 @@ class AnalysisJobService:
     def has_artifact(self, job_id: str, artifact_type: str) -> bool:
         self.get_job(job_id)
         return bool(self._artifacts.list_artifacts(job_id, artifact_type))
+
+    def get_artifact_payload(self, job_id: str, artifact_type: str) -> Any | None:
+        self.get_job(job_id)
+        artifacts = self._artifacts.list_artifacts(job_id, artifact_type)
+        return artifacts[-1].payload if artifacts else None
 
     def get_snapshot(self, job_id: str) -> AnalysisJobSnapshot:
         job = self.get_job(job_id)

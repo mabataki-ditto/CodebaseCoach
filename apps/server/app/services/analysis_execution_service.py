@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
@@ -18,6 +19,7 @@ from app.agent_graph.state import AnalysisState
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.schemas.agent import AnalyzeRepoResponse, GeneratedDocument
+from app.schemas.analysis_job import AnalysisJobResumeResponse, AnalysisJobResumeStatusResponse
 from app.schemas.metrics import MockAnalysisMetrics, RepoScanMetrics
 from app.services.analysis_job_service import AnalysisJobService
 from app.services.doc_storage_service import save_markdown_documents
@@ -50,6 +52,7 @@ class AnalysisExecutionService:
         graph_runner: Callable[..., AnalysisState] = run_analysis_graph,
         mcp_service_factory: Callable[[], McpToolService | None] = _github_mcp_service,
         api_key_provider: Callable[[], str] = _require_llm_api_key,
+        graph_run_service_factory: Callable[[Any], GraphRunService] = GraphRunService,
     ) -> None:
         self._settings_provider = settings_provider
         self._legacy_sync_runner = legacy_sync_runner
@@ -57,6 +60,81 @@ class AnalysisExecutionService:
         self._graph_runner = graph_runner
         self._mcp_service_factory = mcp_service_factory
         self._api_key_provider = api_key_provider
+        self._graph_run_service_factory = graph_run_service_factory
+
+    def get_resume_status(
+        self,
+        job_id: str,
+        job_service: AnalysisJobService,
+    ) -> AnalysisJobResumeStatusResponse:
+        job = job_service.get_job(job_id)
+        metadata = job_service.get_artifact_payload(job_id, "execution_metadata")
+        engine = metadata.get("engine") if isinstance(metadata, dict) else None
+
+        reason: str | None = None
+        if job.status != "failed":
+            reason = f"任务状态 {job.status} 不允许恢复"
+        elif engine != "langgraph":
+            reason = "任务不是由 LangGraph 执行，无法恢复"
+        elif self._settings_provider().analysis_engine != "langgraph":
+            reason = "当前服务未启用 LangGraph"
+
+        recovery_mode = None
+        if reason is None:
+            settings = self._settings_provider()
+            thread_id = langgraph_thread_id(job_id)
+            with self._graph_run_service_factory(settings.graph_checkpoint_path) as graph_runs:
+                if not graph_runs.has_checkpoint(thread_id):
+                    reason = "任务 Checkpoint 不存在"
+                else:
+                    state = graph_runs.get_checkpoint_state(thread_id)
+                    local_path = state.get("local_path")
+                    if isinstance(local_path, str) and Path(local_path).is_dir():
+                        recovery_mode = "checkpoint"
+                    elif state.get("repository_commit_sha") or state.get("recovery_source_commit_sha"):
+                        recovery_mode = "rebuild_repository"
+                    else:
+                        recovery_mode = "full_restart"
+
+        return AnalysisJobResumeStatusResponse(
+            job_id=job.id,
+            can_resume=reason is None,
+            job_status=job.status,
+            engine=engine,
+            recovery_mode=recovery_mode,
+            reason=reason,
+        )
+
+    def resume_job(
+        self,
+        job_id: str,
+        job_service: AnalysisJobService,
+    ) -> AnalysisJobResumeResponse:
+        status = self.get_resume_status(job_id, job_service)
+        if not status.can_resume or status.recovery_mode is None:
+            raise AppError(
+                status_code=409,
+                code="ANALYSIS_JOB_NOT_RESUMABLE",
+                message="当前任务无法恢复",
+                detail=status.reason,
+            )
+        job = job_service.try_prepare_resume(job_id)
+        metadata = job_service.get_artifact_payload(job_id, "execution_metadata")
+        job_service.put_artifact(
+            job_id,
+            "execution_metadata",
+            {
+                **(metadata if isinstance(metadata, dict) else {}),
+                "resume_requested": True,
+                "recovery_mode": status.recovery_mode,
+            },
+        )
+        return AnalysisJobResumeResponse(
+            job_id=job.id,
+            status=job.status,
+            resumed=True,
+            recovery_mode=status.recovery_mode,
+        )
 
     def run_sync(self, repo_url: str) -> AnalyzeRepoResponse:
         if self._settings_provider().analysis_engine == "legacy":
@@ -150,6 +228,10 @@ class AnalysisExecutionService:
         persisted_artifacts = self._existing_artifact_types(job_id, job_service)
         repo_loaded_emitted = self._has_repo_loaded_event(job_id, job_service)
         response: AnalyzeRepoResponse | None = None
+        execution_metadata = job_service.get_artifact_payload(job_id, "execution_metadata")
+        if not isinstance(execution_metadata, dict):
+            execution_metadata = {}
+        repository_refresh_sha = execution_metadata.get("repository_context_commit_sha")
 
         def cancel_check() -> None:
             self.raise_if_cancelled(job_id, job_service)
@@ -167,17 +249,8 @@ class AnalysisExecutionService:
             adapter.handle_custom_event(event)
 
         def observe_state(state: AnalysisState) -> None:
-            nonlocal latest_state, repo_loaded_emitted
+            nonlocal latest_state, repo_loaded_emitted, execution_metadata, repository_refresh_sha
             latest_state = state
-            for artifact_type in ("file_tree", "basic_files", "core_files"):
-                values = state.get(artifact_type)
-                if values is not None and artifact_type not in persisted_artifacts:
-                    job_service.put_artifact(
-                        job_id,
-                        artifact_type,
-                        [value.model_dump() for value in values],
-                    )
-                    persisted_artifacts.add(artifact_type)
             parsed_repo = state.get("parsed_repo")
             if parsed_repo is not None:
                 job_service.update_status(
@@ -187,6 +260,50 @@ class AnalysisExecutionService:
                     repo=parsed_repo.repo,
                     mock_mode=False,
                 )
+            commit_sha = state.get("repository_commit_sha")
+            recovery_mode = state.get("recovery_mode")
+            if (
+                recovery_mode == "full_restart"
+                and execution_metadata.get("recovery_mode") != "full_restart"
+            ):
+                adapter.append(
+                    "stage_started",
+                    {
+                        "key": "repository_recovery_full_restart",
+                        "title": "仓库版本已变化，重新生成全部文档",
+                        "description": "Discard recovered documents from a different commit",
+                    },
+                )
+            if (
+                recovery_mode == "full_restart"
+                and commit_sha
+                and repository_refresh_sha != commit_sha
+            ):
+                persisted_artifacts.difference_update({"file_tree", "basic_files", "core_files"})
+                repo_loaded_emitted = False
+                repository_refresh_sha = commit_sha
+            if (
+                (commit_sha is not None and commit_sha != execution_metadata.get("repository_commit_sha"))
+                or (
+                    recovery_mode is not None
+                    and recovery_mode != execution_metadata.get("recovery_mode")
+                )
+            ):
+                execution_metadata = {**execution_metadata}
+                if commit_sha is not None:
+                    execution_metadata["repository_commit_sha"] = commit_sha
+                if recovery_mode is not None:
+                    execution_metadata["recovery_mode"] = recovery_mode
+                job_service.put_artifact(job_id, "execution_metadata", execution_metadata)
+            for artifact_type in ("file_tree", "basic_files", "core_files"):
+                values = state.get(artifact_type)
+                if values is not None and artifact_type not in persisted_artifacts:
+                    job_service.put_artifact(
+                        job_id,
+                        artifact_type,
+                        [value.model_dump() for value in values],
+                    )
+                    persisted_artifacts.add(artifact_type)
             if state.get("context_quality_report") is not None and not repo_loaded_emitted:
                 adapter.append(
                     "stage_completed",
@@ -212,22 +329,61 @@ class AnalysisExecutionService:
                     },
                 )
                 repo_loaded_emitted = True
+                execution_metadata = {
+                    **execution_metadata,
+                    "repository_context_commit_sha": state.get("repository_commit_sha"),
+                }
+                job_service.put_artifact(job_id, "execution_metadata", execution_metadata)
 
         try:
             api_key = self._api_key_provider()
             job_service.update_status(job_id, "running", mock_mode=False)
-            adapter.append("job_started", {"repo_url": repo_url, "mock_mode": False})
-            with GraphRunService(settings.graph_checkpoint_path) as graph_runs:
+            with self._graph_run_service_factory(settings.graph_checkpoint_path) as graph_runs:
                 resume = graph_runs.has_checkpoint(thread_id)
+                if execution_metadata.get("resume_requested") and not resume:
+                    raise AppError(
+                        status_code=404,
+                        code="GRAPH_CHECKPOINT_NOT_FOUND",
+                        message="LangGraph checkpoint was not found",
+                    )
+                recovery_mode = "checkpoint" if resume else None
+                recovery_initial_state = None
                 if resume:
                     job_service.prepare_resume(job_id)
+                    checkpoint_state = graph_runs.get_checkpoint_state(thread_id)
+                    local_path = checkpoint_state.get("local_path")
+                    if not (isinstance(local_path, str) and Path(local_path).is_dir()):
+                        recovery_initial_state = self._build_repository_recovery_state(
+                            checkpoint_state,
+                            repo_url=repo_url,
+                            job_id=job_id,
+                        )
+                        recovery_mode = recovery_initial_state["recovery_mode"]
+                        graph_runs.delete_thread(thread_id)
+                        resume = False
+                previous_attempt = execution_metadata.get("resume_attempt", 0)
+                resume_attempt = int(previous_attempt) + 1 if recovery_mode else int(previous_attempt)
+                execution_metadata = {
+                    **execution_metadata,
+                    "engine": "langgraph",
+                    "thread_id": thread_id,
+                    "resumed": recovery_mode is not None,
+                    "recovery_mode": recovery_mode,
+                    "resume_attempt": resume_attempt,
+                    "resume_requested": False,
+                }
                 job_service.put_artifact(
                     job_id,
                     "execution_metadata",
+                    execution_metadata,
+                )
+                adapter.append(
+                    "job_started",
                     {
-                        "engine": "langgraph",
-                        "thread_id": thread_id,
-                        "resumed": resume,
+                        "repo_url": repo_url,
+                        "mock_mode": False,
+                        "resumed": recovery_mode is not None,
+                        "recovery_mode": recovery_mode,
                     },
                 )
                 state = self._graph_runner(
@@ -236,6 +392,7 @@ class AnalysisExecutionService:
                     graph_run_service=graph_runs,
                     thread_id=thread_id,
                     resume=resume,
+                    recovery_initial_state=recovery_initial_state,
                     include_quality_loop=True,
                     selective_quality_retry=True,
                     mcp_service=self._mcp_service_factory(),
@@ -250,6 +407,8 @@ class AnalysisExecutionService:
                 latest_state = state or latest_state
                 cancel_check()
                 existing_documents, existing_docs_dir = self._existing_documents(job_id, job_service)
+                if recovery_mode == "full_restart":
+                    existing_documents, existing_docs_dir = [], ""
                 response = self._finalize_graph_state(
                     latest_state,
                     started=started,
@@ -428,6 +587,31 @@ class AnalysisExecutionService:
             metrics=metrics,
             mock_mode=False,
         )
+
+    @staticmethod
+    def _build_repository_recovery_state(
+        checkpoint_state: AnalysisState,
+        *,
+        repo_url: str,
+        job_id: str,
+    ) -> AnalysisState:
+        source_sha = checkpoint_state.get("repository_commit_sha") or checkpoint_state.get(
+            "recovery_source_commit_sha", ""
+        )
+        recovery_state: AnalysisState = {
+            "job_id": job_id,
+            "repo_url": repo_url,
+            "agent_steps": [],
+            "tool_logs": [],
+            "quality_retry_count": 0,
+            "recovery_mode": "rebuild_repository" if source_sha else "full_restart",
+        }
+        if source_sha:
+            recovery_state["recovery_source_commit_sha"] = source_sha
+            document_results = checkpoint_state.get("document_results")
+            if document_results:
+                recovery_state["document_results"] = document_results
+        return recovery_state
 
     @staticmethod
     def _build_metrics(

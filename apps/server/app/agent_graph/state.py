@@ -26,6 +26,9 @@ class AnalysisState(TypedDict, total=False):
     repo_url: str
     parsed_repo: RepoParseResponse
     local_path: str
+    repository_commit_sha: str
+    recovery_source_commit_sha: str
+    recovery_mode: str
     file_tree: list[FileTreeNode]
     basic_files: list[BasicFileSummary]
     core_files: list[CoreFileSummary]

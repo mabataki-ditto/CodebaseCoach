@@ -12,6 +12,13 @@ from app.core.config import settings
 from app.core.errors import AppError, build_error_response
 
 
+def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=build_error_response(exc).model_dump(),
+    )
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="CodebaseCoach API", version="0.1.0")
 
@@ -28,15 +35,8 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(history_router)
     app.include_router(docs_router)
+    app.add_exception_handler(AppError, app_error_handler)
     return app
 
 
 app = create_app()
-
-
-@app.exception_handler(AppError)
-def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=build_error_response(exc).model_dump(),
-    )

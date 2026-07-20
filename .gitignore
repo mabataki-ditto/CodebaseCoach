@@ -38,6 +38,9 @@ docs/*
 !docs/stage-notes/
 docs/stage-notes/*
 !docs/stage-notes/langgraph-phase-*.md
+!docs/architecture/
+docs/architecture/*
+!docs/architecture/langgraph-workflow.md
 .codex/
 .trae/
 
